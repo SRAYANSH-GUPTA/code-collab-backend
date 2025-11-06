@@ -1,0 +1,18 @@
+[Unit]
+Description=Code Linter Backend Service
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/code-linter/codecollab/backend
+ExecStart=/opt/code-linter/codecollab/backend/code-linter-server
+Restart=always
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=code-linter
+Environment="PATH=/usr/local/go/bin:/usr/bin:/bin"
+
+[Install]
+WantedBy=multi-user.target
