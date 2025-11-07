@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/codecollab/backend/config"
-	"github.com/codecollab/backend/handlers"
-	"github.com/codecollab/backend/utils"
+	"codecollab/config"
+	"codecollab/handlers"
+	"codecollab/utils"
 )
 
 func main() {
@@ -47,9 +47,9 @@ func main() {
 
 	
 	go func() {
-		logger.Info("Server listening on http:
-		logger.Info("WebSocket endpoint: ws:
-		logger.Info("Health check: http:
+		logger.Info("WebSocket endpoint: ws://localhost:%s/ws", cfg.Port)
+		logger.Info("WebSocket endpoint: ws://localhost:%s/ws", cfg.Port)
+		logger.Info("Health check: http://localhost:%s/health", cfg.Port)
 
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server failed to start: %v", err)

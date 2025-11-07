@@ -7,28 +7,25 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/codecollab/backend/config"
-	"github.com/codecollab/backend/utils"
+	"codecollab/config"
+	"codecollab/utils"
 )
 
 var logger = utils.NewLogger("auth")
-
 
 type SupabaseUser struct {
 	ID    string `json:"id"`
 	Email string `json:"email"`
 }
 
-
 func VerifyToken(token string, cfg *config.Config) (string, error) {
-	
+
 	if cfg.UseMockAuth {
 		logger.Info("Using mock auth - accepting token: %s", token[:min(10, len(token))])
-		
+
 		return "mock-user-" + token[:min(8, len(token))], nil
 	}
 
-	
 	if cfg.SupabaseURL == "" || cfg.SupabaseAnonKey == "" {
 		return "", fmt.Errorf("Supabase configuration missing")
 	}

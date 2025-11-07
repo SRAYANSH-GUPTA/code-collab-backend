@@ -5,11 +5,10 @@ import (
 	"net/http"
 	"sync"
 	"time"
-
-	"github.com/codecollab/backend/config"
-	"github.com/codecollab/backend/middleware"
-	"github.com/codecollab/backend/models"
-	"github.com/codecollab/backend/utils"
+    "codecollab/middleware"
+	"codecollab/models"
+	"codecollab/utils"
+	"codecollab/config"
 	"github.com/gorilla/websocket"
 )
 
@@ -20,7 +19,7 @@ var (
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
 		CheckOrigin: func(r *http.Request) bool {
-			
+
 			return true
 		},
 	}
@@ -28,10 +27,9 @@ var (
 	rateLimiter = middleware.NewRateLimiter(60, 1*time.Minute)
 )
 
-
 func HandleWebSocket(cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		
+
 		token := r.URL.Query().Get("token")
 		if token == "" {
 			wsLogger.Error("Missing auth token in WebSocket request")
@@ -39,7 +37,6 @@ func HandleWebSocket(cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		
 		userID, err := VerifyToken(token, cfg)
 		if err != nil {
 			wsLogger.Error("Failed to verify token: %v", err)
@@ -47,14 +44,12 @@ func HandleWebSocket(cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			wsLogger.Error("Failed to upgrade connection: %v", err)
 			return
 		}
 
-		
 		connectionsMu.Lock()
 		connections[conn] = &models.Connection{
 			UserID:   userID,
@@ -65,14 +60,13 @@ func HandleWebSocket(cfg *config.Config) http.HandlerFunc {
 		utils.LogConnection("connected", userID)
 		wsLogger.Info("New WebSocket connection for user: %s", userID)
 
-		
 		go handleConnection(conn, userID, cfg)
 	}
 }
 
 func handleConnection(conn *websocket.Conn, userID string, cfg *config.Config) {
 	defer func() {
-		
+
 		connectionsMu.Lock()
 		delete(connections, conn)
 		connectionsMu.Unlock()
@@ -83,7 +77,7 @@ func handleConnection(conn *websocket.Conn, userID string, cfg *config.Config) {
 	}()
 
 	for {
-		
+
 		_, messageBytes, err := conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
@@ -92,7 +86,6 @@ func handleConnection(conn *websocket.Conn, userID string, cfg *config.Config) {
 			break
 		}
 
-		
 		var request models.AnalyzeRequest
 		if err := json.Unmarshal(messageBytes, &request); err != nil {
 			wsLogger.Error("Failed to parse request from user %s: %v", userID, err)
@@ -100,7 +93,6 @@ func handleConnection(conn *websocket.Conn, userID string, cfg *config.Config) {
 			continue
 		}
 
-		
 		if request.Action != "analyze" {
 			sendError(conn, "Unknown action: "+request.Action)
 			continue
@@ -116,18 +108,15 @@ func handleConnection(conn *websocket.Conn, userID string, cfg *config.Config) {
 			continue
 		}
 
-		
 		if !rateLimiter.CheckRateLimit(userID) {
 			wsLogger.Warn("Rate limit exceeded for user: %s", userID)
 			sendError(conn, "Rate limit exceeded. Please wait before sending more requests.")
 			continue
 		}
 
-		
 		startTime := time.Now()
 		wsLogger.Info("Processing analysis request from user %s for language: %s", userID, request.Language)
 
-		
 		errors, err := InvokeLinter(request.Language, request.Code, cfg)
 		if err != nil {
 			wsLogger.Error("Failed to invoke linter for user %s: %v", userID, err)
@@ -135,10 +124,8 @@ func handleConnection(conn *websocket.Conn, userID string, cfg *config.Config) {
 			continue
 		}
 
-		
 		executionTime := int(time.Since(startTime).Milliseconds())
 
-		
 		response := models.AnalyzeResponse{
 			Type:          "analysis_result",
 			Errors:        errors,
@@ -152,7 +139,6 @@ func handleConnection(conn *websocket.Conn, userID string, cfg *config.Config) {
 
 		wsLogger.Info("Sent analysis result to user %s: %d errors, %dms", userID, len(errors), executionTime)
 
-		
 		connectionsMu.Lock()
 		if connInfo, exists := connections[conn]; exists {
 			connInfo.LastSeen = time.Now()
@@ -168,7 +154,6 @@ func sendError(conn *websocket.Conn, message string) {
 	}
 	conn.WriteJSON(response)
 }
-
 
 func HandleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
