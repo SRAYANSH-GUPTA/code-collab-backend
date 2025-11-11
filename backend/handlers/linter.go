@@ -59,10 +59,25 @@ func InvokeLinter(language, code string, cfg *config.Config) ([]models.LintError
 		return nil, fmt.Errorf("Lambda function error: %s", *result.FunctionError)
 	}
 
-	// Parse the response
+	// Parse the response - Lambda returns {statusCode, body} format
+	var lambdaAPIResponse struct {
+		StatusCode int    `json:"statusCode"`
+		Body       string `json:"body"`
+	}
+
+	if err := json.Unmarshal(result.Payload, &lambdaAPIResponse); err != nil {
+		return nil, fmt.Errorf("failed to parse Lambda API response: %w", err)
+	}
+
+	// Check status code
+	if lambdaAPIResponse.StatusCode != 200 {
+		return nil, fmt.Errorf("Lambda returned error status: %d, body: %s", lambdaAPIResponse.StatusCode, lambdaAPIResponse.Body)
+	}
+
+	// Parse the body which contains the actual response
 	var response models.LambdaResponse
-	if err := json.Unmarshal(result.Payload, &response); err != nil {
-		return nil, fmt.Errorf("failed to parse Lambda response: %w", err)
+	if err := json.Unmarshal([]byte(lambdaAPIResponse.Body), &response); err != nil {
+		return nil, fmt.Errorf("failed to parse Lambda response body: %w", err)
 	}
 
 	return response.Errors, nil

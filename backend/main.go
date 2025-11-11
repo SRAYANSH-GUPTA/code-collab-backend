@@ -26,15 +26,19 @@ func main() {
 	logger.Info("Mock Lambda: %v", cfg.UseMockLambda)
 	logger.Info("Mock Auth: %v", cfg.UseMockAuth)
 
-	
+
 	http.HandleFunc("/ws", handlers.HandleWebSocket(cfg))
 	http.HandleFunc("/health", handlers.HandleHealth)
 
-	
+
+	http.HandleFunc("/swagger.yaml", handlers.ServeSwaggerYAML)
+	http.HandleFunc("/docs", handlers.ServeSwaggerUI)
+
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"message":"Code Linting Platform API","version":"1.0.0","endpoints":{"/ws":"WebSocket endpoint","/health":"Health check"}}`)
+		fmt.Fprintf(w, `{"message":"Code Linting Platform API","version":"1.0.0","endpoints":{"/ws":"WebSocket endpoint","/health":"Health check","/docs":"API Documentation"}}`)
 	})
 
 	
@@ -45,11 +49,11 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	
+
 	go func() {
 		logger.Info("WebSocket endpoint: ws://localhost:%s/ws", cfg.Port)
-		logger.Info("WebSocket endpoint: ws://localhost:%s/ws", cfg.Port)
 		logger.Info("Health check: http://localhost:%s/health", cfg.Port)
+		logger.Info("API Documentation: http://localhost:%s/docs", cfg.Port)
 
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server failed to start: %v", err)
