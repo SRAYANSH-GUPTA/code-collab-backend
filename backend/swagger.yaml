@@ -1,0 +1,341 @@
+openapi: 3.0.3
+info:
+  title: CodeCollab API
+  description: |
+    Real-time code linting platform with WebSocket-based communication.
+
+    ## Features
+    - Real-time code analysis via WebSocket
+    - Support for multiple programming languages (TypeScript, JavaScript, Python, Dart, Go, C++)
+    - Token-based authentication via Supabase
+    - Rate limiting (60 requests/minute per user)
+    - AWS Lambda-powered linting engines
+
+    ## Authentication
+    Authentication is required for WebSocket connections. Pass the token as a query parameter:
+    `ws://codecollab.srayansh.me/ws?token=YOUR_TOKEN`
+
+    ## WebSocket Protocol
+    After establishing a WebSocket connection, send JSON messages with the following structure:
+    ```json
+    {
+      "action": "analyze",
+      "language": "typescript",
+      "code": "const x: number = 'hello';"
+    }
+    ```
+
+    The server will respond with analysis results or error messages.
+  version: 1.0.0
+  contact:
+    name: Srayansh
+    url: https://codecollab.srayansh.me
+  license:
+    name: MIT
+
+servers:
+  - url: https://codeolab.srayansh.me
+    description: Production server
+  - url: http://localhost:8080
+    description: Local development server
+
+tags:
+  - name: Health
+    description: Health check and status endpoints
+  - name: WebSocket
+    description: Real-time code analysis via WebSocket
+  - name: Info
+    description: API information
+
+paths:
+  /:
+    get:
+      tags:
+        - Info
+      summary: Get API information
+      description: Returns basic API information and available endpoints
+      operationId: getApiInfo
+      responses:
+        '200':
+          description: API information retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Code Linting Platform API
+                  version:
+                    type: string
+                    example: 1.0.0
+                  endpoints:
+                    type: object
+                    properties:
+                      /ws:
+                        type: string
+                        example: WebSocket endpoint
+                      /health:
+                        type: string
+                        example: Health check
+
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check
+      description: Returns server health status and active connection count
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                  - timestamp
+                  - active_connections
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy]
+                    example: healthy
+                  timestamp:
+                    type: string
+                    format: date-time
+                    example: '2025-11-11T10:30:00Z'
+                  active_connections:
+                    type: integer
+                    minimum: 0
+                    example: 5
+                    description: Number of active WebSocket connections
+
+  /ws:
+    get:
+      tags:
+        - WebSocket
+      summary: WebSocket connection endpoint
+      description: |
+        Establishes a WebSocket connection for real-time code analysis.
+
+        ## Connection Flow
+        1. Send HTTP GET with Upgrade header and token query parameter
+        2. Server verifies token
+        3. Server upgrades connection to WebSocket
+        4. Connection is established and ready for messages
+
+        ## Message Format (Client → Server)
+        ```json
+        {
+          "action": "analyze",
+          "language": "typescript",
+          "code": "const x: number = 'hello';"
+        }
+        ```
+
+        ## Response Format (Server → Client)
+
+        ### Success Response
+        ```json
+        {
+          "type": "analysis_result",
+          "errors": [
+            {
+              "line": 1,
+              "column": 20,
+              "message": "Type 'string' is not assignable to type 'number'",
+              "severity": "error",
+              "length": 7
+            }
+          ],
+          "executionTime": 234
+        }
+        ```
+
+        ### Error Response
+        ```json
+        {
+          "type": "error",
+          "message": "Invalid request format"
+        }
+        ```
+
+        ## Rate Limiting
+        - 60 requests per minute per user
+        - Sliding window algorithm
+        - Returns error message when limit exceeded
+
+        ## Supported Languages
+        - `typescript` / `javascript`
+        - `python`
+        - `dart`
+        - `go` / `golang`
+        - `cpp` / `c++`
+      operationId: websocketConnect
+      parameters:
+        - name: token
+          in: query
+          required: true
+          description: Authentication token (Supabase JWT)
+          schema:
+            type: string
+            example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+      responses:
+        '101':
+          description: Switching Protocols - WebSocket connection established
+        '401':
+          description: Unauthorized - Missing or invalid token
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: Missing auth token
+              examples:
+                missing_token:
+                  value: Missing auth token
+                invalid_token:
+                  value: Invalid auth token
+        '500':
+          description: Internal server error - Failed to upgrade connection
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: Failed to upgrade connection
+
+components:
+  schemas:
+    AnalyzeRequest:
+      type: object
+      required:
+        - action
+        - language
+        - code
+      properties:
+        action:
+          type: string
+          enum: [analyze]
+          description: Must be "analyze"
+          example: analyze
+        language:
+          type: string
+          enum: [typescript, javascript, python, dart, go, golang, cpp, c++]
+          description: Programming language of the code
+          example: typescript
+        code:
+          type: string
+          description: Source code to analyze
+          example: |
+            const x: number = 'hello';
+            function test() {
+              return x + 1;
+            }
+
+    AnalysisResultResponse:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum: [analysis_result]
+          example: analysis_result
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/LintError'
+        executionTime:
+          type: integer
+          description: Processing time in milliseconds
+          example: 234
+
+    ErrorResponse:
+      type: object
+      required:
+        - type
+        - message
+      properties:
+        type:
+          type: string
+          enum: [error]
+          example: error
+        message:
+          type: string
+          description: Error message describing what went wrong
+          example: Invalid request format
+          enum:
+            - Invalid request format
+            - Unknown action
+            - Missing language field
+            - Missing code field
+            - Rate limit exceeded. Please wait before sending more requests.
+            - Failed to analyze code
+
+    LintError:
+      type: object
+      required:
+        - line
+        - column
+        - message
+        - severity
+      properties:
+        line:
+          type: integer
+          minimum: 1
+          description: Line number where the error occurs (1-indexed)
+          example: 1
+        column:
+          type: integer
+          minimum: 0
+          description: Column number where the error occurs
+          example: 20
+        message:
+          type: string
+          description: Human-readable error message
+          example: Type 'string' is not assignable to type 'number'
+        severity:
+          type: string
+          enum: [error, warning, info]
+          description: Severity level of the lint error
+          example: error
+        length:
+          type: integer
+          minimum: 0
+          description: Length of the problematic code segment
+          example: 7
+
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - timestamp
+        - active_connections
+      properties:
+        status:
+          type: string
+          enum: [healthy]
+          example: healthy
+        timestamp:
+          type: string
+          format: date-time
+          example: '2025-11-11T10:30:00Z'
+        active_connections:
+          type: integer
+          minimum: 0
+          example: 5
+
+  securitySchemes:
+    TokenAuth:
+      type: apiKey
+      in: query
+      name: token
+      description: |
+        Supabase JWT token for authentication.
+
+        In development mode with `USE_MOCK_AUTH=true`, any token is accepted.
+        In production, the token is validated against Supabase Auth API.
+
+security:
+  - TokenAuth: []
