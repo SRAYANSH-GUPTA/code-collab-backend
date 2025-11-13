@@ -29,7 +29,8 @@ type Config struct {
 	Port string
 	Env  string
 
-	
+	LokiURL string
+
 	UseMockLambda bool
 	UseMockAuth   bool
 }
@@ -53,6 +54,7 @@ func Load() *Config {
 		LambdaARNCpp:        getEnv("LAMBDA_ARN_CPP", ""),
 		Port:                getEnv("PORT", "8080"),
 		Env:                 getEnv("ENV", "development"),
+		LokiURL:             getEnv("LOKI_URL", "http://loki:3100"),
 		UseMockLambda:       getBoolEnv("USE_MOCK_LAMBDA", false),
 		UseMockAuth:         getBoolEnv("USE_MOCK_AUTH", false),
 	}

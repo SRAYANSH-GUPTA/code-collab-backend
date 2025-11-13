@@ -12,7 +12,11 @@ import (
 
 	"codecollab/config"
 	"codecollab/handlers"
+	"codecollab/metrics"
+	"codecollab/middleware"
 	"codecollab/utils"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func main() {
@@ -26,16 +30,24 @@ func main() {
 	logger.Info("Mock Lambda: %v", cfg.UseMockLambda)
 	logger.Info("Mock Auth: %v", cfg.UseMockAuth)
 
+	metrics.StartSystemMetricsCollector()
+	logger.Info("System metrics collector started")
 
-	http.HandleFunc("/ws", handlers.HandleWebSocket(cfg))
-	http.HandleFunc("/health", handlers.HandleHealth)
+	lokiLogger := utils.NewLokiLogger(cfg.LokiURL, map[string]string{
+		"environment": cfg.Env,
+	})
+	logger.Info("Loki logger initialized: %s", cfg.LokiURL)
 
+	mux := http.NewServeMux()
 
-	http.HandleFunc("/swagger.yaml", handlers.ServeSwaggerYAML)
-	http.HandleFunc("/docs", handlers.ServeSwaggerUI)
+	mux.HandleFunc("/ws", handlers.HandleWebSocket(cfg))
+	mux.HandleFunc("/health", handlers.HandleHealth)
+	mux.Handle("/metrics", promhttp.Handler())
 
+	mux.HandleFunc("/swagger.yaml", handlers.ServeSwaggerYAML)
+	mux.HandleFunc("/docs", handlers.ServeSwaggerUI)
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
@@ -47,12 +59,14 @@ func main() {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"message":"Code Linting Platform API","version":"1.0.0","endpoints":{"/ws":"WebSocket endpoint","/health":"Health check","/docs":"API Documentation"}}`)
+		fmt.Fprintf(w, `{"message":"Code Linting Platform API","version":"1.0.0","endpoints":{"/ws":"WebSocket endpoint","/health":"Health check","/docs":"API Documentation","/metrics":"Prometheus metrics"}}`)
 	})
 
-	
+	handler := middleware.LoggingMiddleware(lokiLogger)(middleware.MetricsMiddleware(mux))
+
 	server := &http.Server{
 		Addr:         ":" + cfg.Port,
+		Handler:      handler,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -63,6 +77,7 @@ func main() {
 		logger.Info("WebSocket endpoint: ws://localhost:%s/ws", cfg.Port)
 		logger.Info("Health check: http://localhost:%s/health", cfg.Port)
 		logger.Info("API Documentation: http://localhost:%s/docs", cfg.Port)
+		logger.Info("Prometheus metrics: http://localhost:%s/metrics", cfg.Port)
 
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server failed to start: %v", err)

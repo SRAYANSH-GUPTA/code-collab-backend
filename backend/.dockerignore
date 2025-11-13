@@ -1,0 +1,11 @@
+.git
+.gitignore
+README.md
+MONITORING.md
+docker-compose.yml
+Dockerfile
+.env.example
+*.md
+grafana/
+prometheus.yml
+loki-config.yml
