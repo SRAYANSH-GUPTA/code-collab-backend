@@ -19,6 +19,27 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// @title Code Collaboration Backend API
+// @version 1.0
+// @description Backend API for real-time code collaboration platform with WebSocket communication and voice calls using SFU architecture
+// @termsOfService http://swagger.io/terms/
+
+// @contact.name API Support
+// @contact.email support@codecollab.com
+
+// @license.name MIT
+// @license.url https://opensource.org/licenses/MIT
+
+// @host localhost:8080
+// @BasePath /
+
+// @schemes ws wss http https
+
+// @securityDefinitions.apikey BearerAuth
+// @in query
+// @name token
+// @description Authentication token passed as query parameter for WebSocket connections
+
 func main() {
 	
 	cfg := config.Load()
@@ -29,6 +50,11 @@ func main() {
 	logger.Info("Port: %s", cfg.Port)
 	logger.Info("Mock Lambda: %v", cfg.UseMockLambda)
 	logger.Info("Mock Auth: %v", cfg.UseMockAuth)
+
+	// Initialize voice service
+	// Best Practice: Initialize critical services at startup
+	handlers.InitVoiceService(cfg.STUNServers, cfg.TURNServers, cfg.TURNUsername, cfg.TURNPassword)
+	logger.Info("Voice service initialized with %d STUN and %d TURN servers", len(cfg.STUNServers), len(cfg.TURNServers))
 
 	metrics.StartSystemMetricsCollector()
 	logger.Info("System metrics collector started")

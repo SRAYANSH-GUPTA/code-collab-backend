@@ -1,8 +1,10 @@
 package middleware
 
 import (
+	"bufio"
 	"bytes"
 	"io"
+	"net"
 	"net/http"
 	"time"
 
@@ -26,6 +28,14 @@ func (rc *responseCapture) Write(b []byte) (int, error) {
 	n, err := rc.ResponseWriter.Write(b)
 	rc.written += int64(n)
 	return n, err
+}
+
+
+func (rc *responseCapture) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hijacker, ok := rc.ResponseWriter.(http.Hijacker); ok {
+		return hijacker.Hijack()
+	}
+	return nil, nil, http.ErrNotSupported
 }
 
 func LoggingMiddleware(logger *utils.LokiLogger) func(http.Handler) http.Handler {

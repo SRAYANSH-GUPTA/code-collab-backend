@@ -14,26 +14,26 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 )
 
-// InvokeLinter invokes the appropriate Lambda function based on the language
+
 func InvokeLinter(language, code string, cfg *config.Config) ([]models.LintError, error) {
-	// Get the appropriate Lambda ARN for the language
+	
 	lambdaARN, err := getLambdaARN(language, cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	// If using mock Lambda (for testing), return mock data
+	
 	if cfg.UseMockLambda {
 		return getMockLintErrors(language), nil
 	}
 
-	// Create AWS Lambda client
+	
 	lambdaClient, err := createLambdaClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Lambda client: %w", err)
 	}
 
-	// Prepare the request payload
+	
 	request := models.LambdaRequest{
 		Language: language,
 		Code:     code,
@@ -44,7 +44,7 @@ func InvokeLinter(language, code string, cfg *config.Config) ([]models.LintError
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Invoke the Lambda function
+	
 	result, err := lambdaClient.Invoke(context.TODO(), &lambda.InvokeInput{
 		FunctionName: aws.String(lambdaARN),
 		Payload:      payload,
@@ -54,12 +54,12 @@ func InvokeLinter(language, code string, cfg *config.Config) ([]models.LintError
 		return nil, fmt.Errorf("failed to invoke Lambda: %w", err)
 	}
 
-	// Check for Lambda function errors
+	
 	if result.FunctionError != nil {
 		return nil, fmt.Errorf("Lambda function error: %s", *result.FunctionError)
 	}
 
-	// Parse the response - Lambda returns {statusCode, body} format
+	
 	var lambdaAPIResponse struct {
 		StatusCode int    `json:"statusCode"`
 		Body       string `json:"body"`
@@ -69,12 +69,12 @@ func InvokeLinter(language, code string, cfg *config.Config) ([]models.LintError
 		return nil, fmt.Errorf("failed to parse Lambda API response: %w", err)
 	}
 
-	// Check status code
+	
 	if lambdaAPIResponse.StatusCode != 200 {
 		return nil, fmt.Errorf("Lambda returned error status: %d, body: %s", lambdaAPIResponse.StatusCode, lambdaAPIResponse.Body)
 	}
 
-	// Parse the body which contains the actual response
+	
 	var response models.LambdaResponse
 	if err := json.Unmarshal([]byte(lambdaAPIResponse.Body), &response); err != nil {
 		return nil, fmt.Errorf("failed to parse Lambda response body: %w", err)
@@ -83,7 +83,7 @@ func InvokeLinter(language, code string, cfg *config.Config) ([]models.LintError
 	return response.Errors, nil
 }
 
-// getLambdaARN returns the Lambda ARN for the specified language
+
 func getLambdaARN(language string, cfg *config.Config) (string, error) {
 	var arn string
 
@@ -109,7 +109,7 @@ func getLambdaARN(language string, cfg *config.Config) (string, error) {
 	return arn, nil
 }
 
-// createLambdaClient creates an AWS Lambda client with the provided configuration
+
 func createLambdaClient(cfg *config.Config) (*lambda.Client, error) {
 	awsCfg, err := awsconfig.LoadDefaultConfig(context.TODO(),
 		awsconfig.WithRegion(cfg.AWSRegion),
@@ -127,7 +127,7 @@ func createLambdaClient(cfg *config.Config) (*lambda.Client, error) {
 	return lambda.NewFromConfig(awsCfg), nil
 }
 
-// getMockLintErrors returns mock lint errors for testing purposes
+
 func getMockLintErrors(language string) []models.LintError {
 	return []models.LintError{
 		{

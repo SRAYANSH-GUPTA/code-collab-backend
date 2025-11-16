@@ -27,6 +27,28 @@ var (
 	rateLimiter = middleware.NewRateLimiter(60, 1*time.Minute)
 )
 
+// HandleWebSocket establishes WebSocket connection for real-time communication
+// @Summary WebSocket Connection Endpoint
+// @Description Establishes WebSocket connection for code analysis and voice calls. Supports multiple message types including analysis requests and voice operations.
+// @Description
+// @Description **Message Types:**
+// @Description - `analysis`: Request code analysis
+// @Description - `voice`: Voice call operations (join, leave, offer, ice_candidate, mute, unmute)
+// @Description
+// @Description **Voice Actions:**
+// @Description - `join`: Join a voice room
+// @Description - `leave`: Leave a voice room
+// @Description - `offer`: Send WebRTC offer
+// @Description - `ice_candidate`: Send ICE candidate for NAT traversal
+// @Description - `mute`: Mute microphone
+// @Description - `unmute`: Unmute microphone
+// @Tags websocket
+// @Param token query string true "Authentication token"
+// @Success 101 {string} string "Switching Protocols - WebSocket connection established"
+// @Failure 401 {string} string "Unauthorized - Invalid or missing token"
+// @Failure 429 {string} string "Too Many Requests - Rate limit exceeded"
+// @Router /ws [get]
+// @Security BearerAuth
 func HandleWebSocket(cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 
@@ -66,10 +88,13 @@ func HandleWebSocket(cfg *config.Config) http.HandlerFunc {
 
 func handleConnection(conn *websocket.Conn, userID string, cfg *config.Config) {
 	defer func() {
-
+		
 		connectionsMu.Lock()
 		delete(connections, conn)
 		connectionsMu.Unlock()
+
+		
+		HandleVoiceDisconnect(userID)
 
 		conn.Close()
 		utils.LogConnection("disconnected", userID)
@@ -86,9 +111,29 @@ func handleConnection(conn *websocket.Conn, userID string, cfg *config.Config) {
 			break
 		}
 
+		
+		var actionMsg struct {
+			Action string `json:"action"`
+		}
+		if err := json.Unmarshal(messageBytes, &actionMsg); err != nil {
+			wsLogger.Error("Failed to parse request from user %s: %v", userID, err)
+			sendError(conn, "Invalid request format")
+			continue
+		}
+
+		
+		
+		if actionMsg.Action == "join" || actionMsg.Action == "leave" ||
+		   actionMsg.Action == "offer" || actionMsg.Action == "ice_candidate" ||
+		   actionMsg.Action == "mute" || actionMsg.Action == "unmute" {
+			HandleVoiceMessage(conn, userID, messageBytes)
+			continue
+		}
+
+		
 		var request models.AnalyzeRequest
 		if err := json.Unmarshal(messageBytes, &request); err != nil {
-			wsLogger.Error("Failed to parse request from user %s: %v", userID, err)
+			wsLogger.Error("Failed to parse analyze request from user %s: %v", userID, err)
 			sendError(conn, "Invalid request format")
 			continue
 		}
@@ -155,6 +200,13 @@ func sendError(conn *websocket.Conn, message string) {
 	conn.WriteJSON(response)
 }
 
+// HandleHealth provides health check endpoint
+// @Summary Health Check
+// @Description Returns server health status including active connections and voice statistics
+// @Tags health
+// @Produce json
+// @Success 200 {object} map[string]interface{} "Health status with active connections and voice stats"
+// @Router /health [get]
 func HandleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -172,10 +224,12 @@ func HandleHealth(w http.ResponseWriter, r *http.Request) {
 	activeConnections := len(connections)
 	connectionsMu.RUnlock()
 
+
 	response := map[string]interface{}{
 		"status":             "healthy",
 		"timestamp":          time.Now().Format(time.RFC3339),
 		"active_connections": activeConnections,
+		"voice":              GetVoiceStats(),
 	}
 
 	json.NewEncoder(w).Encode(response)

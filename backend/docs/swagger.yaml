@@ -1,0 +1,185 @@
+basePath: /
+definitions:
+  models.VoiceMessage:
+    description: Voice message structure for WebSocket communication in voice calls
+    properties:
+      action:
+        description: 'Action type: join, leave, offer, ice_candidate, mute, unmute'
+        enum:
+        - join
+        - leave
+        - offer
+        - ice_candidate
+        - mute
+        - unmute
+        example: join
+        type: string
+      isMuted:
+        description: Mute status
+        example: false
+        type: boolean
+      roomId:
+        description: Voice channel/room identifier
+        example: voice-room-1
+        type: string
+      targetId:
+        description: Target user for P2P signaling
+        example: user-456
+        type: string
+      timestamp:
+        description: Message timestamp
+        example: "2025-01-15T10:30:00Z"
+        type: string
+      userId:
+        description: User identifier (set by server)
+        example: user-123
+        type: string
+    type: object
+  models.VoiceResponse:
+    description: Voice response structure sent by server for voice-related events
+    properties:
+      error:
+        description: Error message
+        example: Room not found
+        type: string
+      message:
+        description: Success message
+        example: Successfully joined room
+        type: string
+      roomId:
+        description: Voice room identifier
+        example: voice-room-1
+        type: string
+      type:
+        description: Response type
+        enum:
+        - joined
+        - left
+        - answer
+        - ice_candidate
+        - muted
+        - unmuted
+        - user_joined
+        - user_left
+        - error
+        example: joined
+        type: string
+      userId:
+        description: User identifier
+        example: user-123
+        type: string
+      users:
+        description: List of users in the room
+        items:
+          $ref: '#/definitions/models.VoiceUser'
+        type: array
+    type: object
+  models.VoiceUser:
+    description: User information in a voice room
+    properties:
+      isMuted:
+        description: Mute status
+        example: false
+        type: boolean
+      isSpeaking:
+        description: Voice activity detection status
+        example: true
+        type: boolean
+      joinedAt:
+        description: Time when user joined the room
+        example: "2025-01-15T10:30:00Z"
+        type: string
+      quality:
+        description: Connection quality indicator
+        enum:
+        - good
+        - fair
+        - poor
+        example: good
+        type: string
+      userId:
+        description: User identifier
+        example: user-123
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: support@codecollab.com
+    name: API Support
+  description: Backend API for real-time code collaboration platform with WebSocket
+    communication and voice calls using SFU architecture
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  termsOfService: http://swagger.io/terms/
+  title: Code Collaboration Backend API
+  version: "1.0"
+paths:
+  /health:
+    get:
+      description: Returns server health status including active connections and voice
+        statistics
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Health status with active connections and voice stats
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Health Check
+      tags:
+      - health
+  /ws:
+    get:
+      description: |-
+        Establishes WebSocket connection for code analysis and voice calls. Supports multiple message types including analysis requests and voice operations.
+
+        **Message Types:**
+        - `analysis`: Request code analysis
+        - `voice`: Voice call operations (join, leave, offer, ice_candidate, mute, unmute)
+
+        **Voice Actions:**
+        - `join`: Join a voice room
+        - `leave`: Leave a voice room
+        - `offer`: Send WebRTC offer
+        - `ice_candidate`: Send ICE candidate for NAT traversal
+        - `mute`: Mute microphone
+        - `unmute`: Unmute microphone
+      parameters:
+      - description: Authentication token
+        in: query
+        name: token
+        required: true
+        type: string
+      responses:
+        "101":
+          description: Switching Protocols - WebSocket connection established
+          schema:
+            type: string
+        "401":
+          description: Unauthorized - Invalid or missing token
+          schema:
+            type: string
+        "429":
+          description: Too Many Requests - Rate limit exceeded
+          schema:
+            type: string
+      security:
+      - BearerAuth: []
+      summary: WebSocket Connection Endpoint
+      tags:
+      - websocket
+schemes:
+- ws
+- wss
+- http
+- https
+securityDefinitions:
+  BearerAuth:
+    description: Authentication token passed as query parameter for WebSocket connections
+    in: query
+    name: token
+    type: apiKey
+swagger: "2.0"

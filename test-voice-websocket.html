@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Call WebSocket Test</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 16px;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .status {
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 18px;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .success {
+            background: #d4edda;
+            color: #155724;
+            border: 2px solid #c3e6cb;
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 2px solid #f5c6cb;
+        }
+
+        .info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 2px solid #bee5eb;
+        }
+
+        .warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 2px solid #ffeaa7;
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+
+        button:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        .room-info {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .room-info h3 {
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .room-info p {
+            margin: 5px 0;
+            color: #666;
+        }
+
+        .room-info strong {
+            color: #333;
+        }
+
+        #log {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            border-radius: 10px;
+            height: 400px;
+            overflow-y: auto;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .log-entry {
+            margin-bottom: 8px;
+            padding: 5px;
+            border-radius: 3px;
+        }
+
+        .log-time {
+            color: #858585;
+            font-weight: 600;
+        }
+
+        .log-sent {
+            color: #4fc3f7;
+        }
+
+        .log-received {
+            color: #81c784;
+        }
+
+        .log-error {
+            color: #e57373;
+            background: rgba(229, 115, 115, 0.1);
+        }
+
+        .log-info {
+            color: #ffd54f;
+        }
+
+        .users-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .user-card {
+            background: white;
+            border: 2px solid #667eea;
+            padding: 10px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .user-card.muted {
+            border-color: #f44336;
+            opacity: 0.7;
+        }
+
+        .user-card .user-icon {
+            font-size: 40px;
+            margin-bottom: 5px;
+        }
+
+        .user-card .user-name {
+            font-size: 12px;
+            color: #666;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-top: 5px;
+        }
+
+        .badge.muted {
+            background: #ffebee;
+            color: #c62828;
+        }
+
+        .badge.unmuted {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎤 Voice Call WebSocket Test</h1>
+            <p>Test Discord-like Voice Calls with SFU Architecture</p>
+        </div>
+
+        <div class="content">
+            <div id="status" class="status info">Ready to connect...</div>
+
+            <div class="controls">
+                <button id="connect">1️⃣ Connect WebSocket</button>
+                <button id="join" disabled>2️⃣ Join Voice Room</button>
+                <button id="mute" disabled>🔇 Mute</button>
+                <button id="unmute" disabled>🔊 Unmute</button>
+                <button id="leave" disabled>👋 Leave Room</button>
+                <button id="disconnect" disabled>🔌 Disconnect</button>
+            </div>
+
+            <div id="roomInfo" class="room-info" style="display: none;">
+                <h3>📍 Room Information</h3>
+                <p><strong>Room ID:</strong> <span id="roomId">-</span></p>
+                <p><strong>Your User ID:</strong> <span id="userId">-</span></p>
+                <p><strong>Users in Room:</strong> <span id="userCount">0</span></p>
+                <div id="usersList" class="users-list"></div>
+            </div>
+
+            <h3 style="margin-bottom: 10px; color: #333;">📋 Console Log</h3>
+            <div id="log"></div>
+        </div>
+    </div>
+
+    <script>
+        let ws;
+        let currentRoomId = null;
+        let currentUserId = null;
+        let peerConnection = null;
+        let localStream = null;
+        let remoteAudioElements = new Map(); // Map of userID -> audio element
+
+        const statusEl = document.getElementById('status');
+        const logEl = document.getElementById('log');
+        const roomInfoEl = document.getElementById('roomInfo');
+        const roomIdEl = document.getElementById('roomId');
+        const userIdEl = document.getElementById('userId');
+        const userCountEl = document.getElementById('userCount');
+        const usersListEl = document.getElementById('usersList');
+
+        function log(message, type = 'info') {
+            const time = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.innerHTML = `<span class="log-time">[${time}]</span> ${message}`;
+            logEl.appendChild(entry);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function setStatus(message, type) {
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`;
+        }
+
+        function updateRoomInfo(data) {
+            if (data.roomId) {
+                currentRoomId = data.roomId;
+                roomIdEl.textContent = data.roomId;
+            }
+            if (data.userId) {
+                currentUserId = data.userId;
+                userIdEl.textContent = data.userId;
+            }
+            if (data.users) {
+                userCountEl.textContent = data.users.length;
+
+                // Display users
+                usersListEl.innerHTML = '';
+                data.users.forEach(user => {
+                    const userCard = document.createElement('div');
+                    userCard.className = `user-card ${user.isMuted ? 'muted' : ''}`;
+
+                    const icon = user.userId === currentUserId ? '👤' : '👥';
+                    const name = user.userId === currentUserId ? 'You' : user.userId.substring(0, 12);
+                    const muteStatus = user.isMuted ? 'muted' : 'unmuted';
+
+                    userCard.innerHTML = `
+                        <div class="user-icon">${icon}</div>
+                        <div class="user-name">${name}</div>
+                        <div class="badge ${muteStatus}">${user.isMuted ? '🔇 Muted' : '🔊 Active'}</div>
+                    `;
+                    usersListEl.appendChild(userCard);
+                });
+
+                roomInfoEl.style.display = 'block';
+            }
+        }
+
+        // Initialize WebRTC Peer Connection
+        async function initWebRTC() {
+            try {
+                // Check if WebRTC is supported
+                if (!window.RTCPeerConnection) {
+                    log('❌ WebRTC not supported in this browser', 'error');
+                    setStatus('❌ Browser does not support WebRTC', 'error');
+                    return;
+                }
+
+                // Request microphone access
+                log('🎤 Requesting microphone access...', 'info');
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+                log('✅ Microphone access granted!', 'received');
+
+                // Create peer connection with STUN servers
+                const configuration = {
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' },
+                        { urls: 'stun:stun2.l.google.com:19302' }
+                    ]
+                };
+
+                peerConnection = new window.RTCPeerConnection(configuration);
+                log('✅ RTCPeerConnection created', 'info');
+
+                // Add local audio track to peer connection
+                localStream.getTracks().forEach(track => {
+                    peerConnection.addTrack(track, localStream);
+                    log(`➕ Added local ${track.kind} track`, 'info');
+                });
+
+                // Handle ICE candidates
+                peerConnection.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        log('🧊 Sending ICE candidate', 'sent');
+                        const msg = {
+                            action: 'ice_candidate',
+                            roomId: currentRoomId,
+                            candidate: event.candidate.toJSON()
+                        };
+                        ws.send(JSON.stringify(msg));
+                    } else {
+                        log('🧊 All ICE candidates sent', 'info');
+                    }
+                };
+
+                // Handle incoming tracks (audio from other users)
+                peerConnection.ontrack = (event) => {
+                    log(`🔊 Received remote track from peer`, 'received');
+
+                    const remoteStream = event.streams[0];
+
+                    // Create or get audio element for this stream
+                    let audioElement = document.createElement('audio');
+                    audioElement.srcObject = remoteStream;
+                    audioElement.autoplay = true;
+                    audioElement.controls = false;
+
+                    // Add to DOM (hidden)
+                    document.body.appendChild(audioElement);
+
+                    log('🔊 Playing remote audio stream', 'received');
+
+                    // Play the audio
+                    audioElement.play().catch(err => {
+                        log(`❌ Error playing audio: ${err.message}`, 'error');
+                    });
+                };
+
+                // Connection state monitoring
+                peerConnection.onconnectionstatechange = () => {
+                    log(`🔗 Connection state: ${peerConnection.connectionState}`, 'info');
+
+                    if (peerConnection.connectionState === 'connected') {
+                        log('✅ WebRTC connection established!', 'received');
+                        setStatus('✅ Voice connected - You can talk now!', 'success');
+                    } else if (peerConnection.connectionState === 'failed') {
+                        log('❌ WebRTC connection failed', 'error');
+                        setStatus('❌ Voice connection failed', 'error');
+                    } else if (peerConnection.connectionState === 'disconnected') {
+                        log('⚠️ WebRTC disconnected', 'warning');
+                    }
+                };
+
+                peerConnection.oniceconnectionstatechange = () => {
+                    log(`🧊 ICE state: ${peerConnection.iceConnectionState}`, 'info');
+                };
+
+                // Create and send offer
+                log('📤 Creating WebRTC offer...', 'info');
+                const offer = await peerConnection.createOffer({
+                    offerToReceiveAudio: true
+                });
+
+                await peerConnection.setLocalDescription(offer);
+                log('✅ Local description set', 'info');
+
+                const msg = {
+                    action: 'offer',
+                    roomId: currentRoomId,
+                    sdp: {
+                        type: offer.type,
+                        sdp: offer.sdp
+                    }
+                };
+
+                log('📤 SENDING WebRTC Offer', 'sent');
+                ws.send(JSON.stringify(msg));
+
+            } catch (error) {
+                log(`❌ WebRTC initialization failed: ${error.message}`, 'error');
+                setStatus(`❌ Microphone access denied or WebRTC error`, 'error');
+            }
+        }
+
+        // Close WebRTC connection
+        function closeWebRTC() {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+                log('🛑 Local stream stopped', 'info');
+            }
+
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+                log('🛑 Peer connection closed', 'info');
+            }
+
+            // Remove all remote audio elements
+            remoteAudioElements.forEach(audio => {
+                if (audio && audio.parentNode) {
+                    audio.parentNode.removeChild(audio);
+                }
+            });
+            remoteAudioElements.clear();
+        }
+
+        // Connect WebSocket
+        document.getElementById('connect').onclick = () => {
+            const token = 'test-user-' + Math.floor(Math.random() * 1000);
+            const url = `ws://10.105.87.113:8080/ws?token=${token}`;
+
+            log(`🔗 Connecting to ${url}`, 'info');
+            setStatus('🔄 Connecting to server...', 'info');
+
+            ws = new WebSocket(url);
+
+            ws.onopen = () => {
+                log('✅ WebSocket connected successfully!', 'received');
+                setStatus('✅ Connected - Ready to join voice room', 'success');
+
+                document.getElementById('connect').disabled = true;
+                document.getElementById('join').disabled = false;
+                document.getElementById('disconnect').disabled = false;
+            };
+
+            ws.onmessage = async (event) => {
+                const data = JSON.parse(event.data);
+                log(`📥 RECEIVED: ${JSON.stringify(data, null, 2)}`, 'received');
+
+                if (data.type === 'joined') {
+                    setStatus(`✅ Joined room: ${data.roomId}`, 'success');
+                    updateRoomInfo(data);
+
+                    document.getElementById('join').disabled = true;
+                    document.getElementById('mute').disabled = false;
+                    document.getElementById('unmute').disabled = false;
+                    document.getElementById('leave').disabled = false;
+
+                    // Initialize WebRTC after successfully joining
+                    log('🎯 Starting WebRTC initialization...', 'info');
+                    await initWebRTC();
+
+                } else if (data.type === 'answer') {
+                    // Handle WebRTC answer from server
+                    log('📥 Received WebRTC answer', 'received');
+                    try {
+                        await peerConnection.setRemoteDescription(new window.RTCSessionDescription(data.sdp));
+                        log('✅ Remote description set', 'received');
+                    } catch (error) {
+                        log(`❌ Error setting remote description: ${error.message}`, 'error');
+                    }
+
+                } else if (data.type === 'ice_candidate') {
+                    // Handle ICE candidate from server
+                    log('🧊 Received ICE candidate from server', 'received');
+                    try {
+                        if (peerConnection && data.candidate) {
+                            await peerConnection.addIceCandidate(new window.RTCIceCandidate(data.candidate));
+                            log('✅ ICE candidate added', 'received');
+                        }
+                    } catch (error) {
+                        log(`❌ Error adding ICE candidate: ${error.message}`, 'error');
+                    }
+
+                } else if (data.type === 'left') {
+                    setStatus('👋 Left voice room', 'info');
+                    currentRoomId = null;
+                    roomInfoEl.style.display = 'none';
+
+                    document.getElementById('join').disabled = false;
+                    document.getElementById('mute').disabled = true;
+                    document.getElementById('unmute').disabled = true;
+                    document.getElementById('leave').disabled = true;
+
+                    // Close WebRTC connection
+                    closeWebRTC();
+
+                } else if (data.type === 'muted') {
+                    setStatus('🔇 Microphone muted', 'warning');
+                    updateRoomInfo(data);
+
+                    // Mute local audio track
+                    if (localStream) {
+                        localStream.getAudioTracks().forEach(track => {
+                            track.enabled = false;
+                        });
+                        log('🔇 Local audio track muted', 'info');
+                    }
+
+                } else if (data.type === 'unmuted') {
+                    setStatus('🔊 Microphone active', 'success');
+                    updateRoomInfo(data);
+
+                    // Unmute local audio track
+                    if (localStream) {
+                        localStream.getAudioTracks().forEach(track => {
+                            track.enabled = true;
+                        });
+                        log('🔊 Local audio track unmuted', 'info');
+                    }
+
+                } else if (data.type === 'user_joined') {
+                    log(`👤 ${data.userId} joined the room`, 'info');
+                    if (data.users) updateRoomInfo(data);
+
+                } else if (data.type === 'user_left') {
+                    log(`👋 ${data.userId} left the room`, 'info');
+                    if (data.users) updateRoomInfo(data);
+
+                } else if (data.type === 'user_muted') {
+                    if (data.users) updateRoomInfo(data);
+
+                } else if (data.type === 'error') {
+                    setStatus(`❌ Error: ${data.error}`, 'error');
+                    log(`❌ ERROR: ${data.error}`, 'error');
+                }
+            };
+
+            ws.onerror = (error) => {
+                log(`❌ WebSocket error: ${error}`, 'error');
+                setStatus('❌ Connection error', 'error');
+            };
+
+            ws.onclose = (event) => {
+                log(`🔌 WebSocket closed (code: ${event.code}, reason: ${event.reason || 'none'})`, 'info');
+                setStatus('🔌 Disconnected from server', 'info');
+
+                currentRoomId = null;
+                currentUserId = null;
+                roomInfoEl.style.display = 'none';
+
+                // Close WebRTC connection
+                closeWebRTC();
+
+                document.getElementById('connect').disabled = false;
+                document.getElementById('join').disabled = true;
+                document.getElementById('mute').disabled = true;
+                document.getElementById('unmute').disabled = true;
+                document.getElementById('leave').disabled = true;
+                document.getElementById('disconnect').disabled = true;
+            };
+        };
+
+        // Join room
+        document.getElementById('join').onclick = () => {
+            const roomId = 'voice-room-' + 1;
+            const msg = {
+                action: 'join',
+                roomId: roomId
+            };
+            log(`📤 SENDING: ${JSON.stringify(msg, null, 2)}`, 'sent');
+            ws.send(JSON.stringify(msg));
+            setStatus('🔄 Joining voice room...', 'info');
+        };
+
+        // Mute
+        document.getElementById('mute').onclick = () => {
+            if (!currentRoomId) {
+                setStatus('❌ Not in a room', 'error');
+                return;
+            }
+
+            const msg = {
+                action: 'mute',
+                roomId: currentRoomId
+            };
+            log(`📤 SENDING: ${JSON.stringify(msg, null, 2)}`, 'sent');
+            ws.send(JSON.stringify(msg));
+        };
+
+        // Unmute
+        document.getElementById('unmute').onclick = () => {
+            if (!currentRoomId) {
+                setStatus('❌ Not in a room', 'error');
+                return;
+            }
+
+            const msg = {
+                action: 'unmute',
+                roomId: currentRoomId
+            };
+            log(`📤 SENDING: ${JSON.stringify(msg, null, 2)}`, 'sent');
+            ws.send(JSON.stringify(msg));
+        };
+
+        // Leave room
+        document.getElementById('leave').onclick = () => {
+            if (!currentRoomId) {
+                setStatus('❌ Not in a room', 'error');
+                return;
+            }
+
+            const msg = {
+                action: 'leave',
+                roomId: currentRoomId
+            };
+            log(`📤 SENDING: ${JSON.stringify(msg, null, 2)}`, 'sent');
+            ws.send(JSON.stringify(msg));
+        };
+
+        // Disconnect
+        document.getElementById('disconnect').onclick = () => {
+            if (ws) {
+                ws.close();
+                log('🔌 Disconnecting...', 'info');
+            }
+        };
+
+        // Initial log
+        log('🚀 Voice Call Test Page Loaded', 'info');
+        log('💡 Click "Connect WebSocket" to start testing', 'info');
+    </script>
+</body>
+</html>

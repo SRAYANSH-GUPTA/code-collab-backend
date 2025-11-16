@@ -23,7 +23,8 @@ func VerifyToken(token string, cfg *config.Config) (string, error) {
 	if cfg.UseMockAuth {
 		logger.Info("Using mock auth - accepting token: %s", token[:min(10, len(token))])
 
-		return "mock-user-" + token[:min(8, len(token))], nil
+		
+		return "mock-user-" + token, nil
 	}
 
 	if cfg.SupabaseURL == "" || cfg.SupabaseAnonKey == "" {

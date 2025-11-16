@@ -1,0 +1,230 @@
+{
+    "schemes": [
+        "ws",
+        "wss",
+        "http",
+        "https"
+    ],
+    "swagger": "2.0",
+    "info": {
+        "description": "Backend API for real-time code collaboration platform with WebSocket communication and voice calls using SFU architecture",
+        "title": "Code Collaboration Backend API",
+        "termsOfService": "http://swagger.io/terms/",
+        "contact": {
+            "name": "API Support",
+            "email": "support@codecollab.com"
+        },
+        "license": {
+            "name": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+        },
+        "version": "1.0"
+    },
+    "host": "localhost:8080",
+    "basePath": "/",
+    "paths": {
+        "/health": {
+            "get": {
+                "description": "Returns server health status including active connections and voice statistics",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "health"
+                ],
+                "summary": "Health Check",
+                "responses": {
+                    "200": {
+                        "description": "Health status with active connections and voice stats",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/ws": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Establishes WebSocket connection for code analysis and voice calls. Supports multiple message types including analysis requests and voice operations.\n\n**Message Types:**\n- `analysis`: Request code analysis\n- `voice`: Voice call operations (join, leave, offer, ice_candidate, mute, unmute)\n\n**Voice Actions:**\n- `join`: Join a voice room\n- `leave`: Leave a voice room\n- `offer`: Send WebRTC offer\n- `ice_candidate`: Send ICE candidate for NAT traversal\n- `mute`: Mute microphone\n- `unmute`: Unmute microphone",
+                "tags": [
+                    "websocket"
+                ],
+                "summary": "WebSocket Connection Endpoint",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authentication token",
+                        "name": "token",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "101": {
+                        "description": "Switching Protocols - WebSocket connection established",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - Invalid or missing token",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests - Rate limit exceeded",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "models.VoiceMessage": {
+            "description": "Voice message structure for WebSocket communication in voice calls",
+            "type": "object",
+            "properties": {
+                "action": {
+                    "description": "Action type: join, leave, offer, ice_candidate, mute, unmute",
+                    "type": "string",
+                    "enum": [
+                        "join",
+                        "leave",
+                        "offer",
+                        "ice_candidate",
+                        "mute",
+                        "unmute"
+                    ],
+                    "example": "join"
+                },
+                "isMuted": {
+                    "description": "Mute status",
+                    "type": "boolean",
+                    "example": false
+                },
+                "roomId": {
+                    "description": "Voice channel/room identifier",
+                    "type": "string",
+                    "example": "voice-room-1"
+                },
+                "targetId": {
+                    "description": "Target user for P2P signaling",
+                    "type": "string",
+                    "example": "user-456"
+                },
+                "timestamp": {
+                    "description": "Message timestamp",
+                    "type": "string",
+                    "example": "2025-01-15T10:30:00Z"
+                },
+                "userId": {
+                    "description": "User identifier (set by server)",
+                    "type": "string",
+                    "example": "user-123"
+                }
+            }
+        },
+        "models.VoiceResponse": {
+            "description": "Voice response structure sent by server for voice-related events",
+            "type": "object",
+            "properties": {
+                "error": {
+                    "description": "Error message",
+                    "type": "string",
+                    "example": "Room not found"
+                },
+                "message": {
+                    "description": "Success message",
+                    "type": "string",
+                    "example": "Successfully joined room"
+                },
+                "roomId": {
+                    "description": "Voice room identifier",
+                    "type": "string",
+                    "example": "voice-room-1"
+                },
+                "type": {
+                    "description": "Response type",
+                    "type": "string",
+                    "enum": [
+                        "joined",
+                        "left",
+                        "answer",
+                        "ice_candidate",
+                        "muted",
+                        "unmuted",
+                        "user_joined",
+                        "user_left",
+                        "error"
+                    ],
+                    "example": "joined"
+                },
+                "userId": {
+                    "description": "User identifier",
+                    "type": "string",
+                    "example": "user-123"
+                },
+                "users": {
+                    "description": "List of users in the room",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.VoiceUser"
+                    }
+                }
+            }
+        },
+        "models.VoiceUser": {
+            "description": "User information in a voice room",
+            "type": "object",
+            "properties": {
+                "isMuted": {
+                    "description": "Mute status",
+                    "type": "boolean",
+                    "example": false
+                },
+                "isSpeaking": {
+                    "description": "Voice activity detection status",
+                    "type": "boolean",
+                    "example": true
+                },
+                "joinedAt": {
+                    "description": "Time when user joined the room",
+                    "type": "string",
+                    "example": "2025-01-15T10:30:00Z"
+                },
+                "quality": {
+                    "description": "Connection quality indicator",
+                    "type": "string",
+                    "enum": [
+                        "good",
+                        "fair",
+                        "poor"
+                    ],
+                    "example": "good"
+                },
+                "userId": {
+                    "description": "User identifier",
+                    "type": "string",
+                    "example": "user-123"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "Authentication token passed as query parameter for WebSocket connections",
+            "type": "apiKey",
+            "name": "token",
+            "in": "query"
+        }
+    }
+}
