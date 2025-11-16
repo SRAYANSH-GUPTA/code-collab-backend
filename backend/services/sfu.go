@@ -159,6 +159,38 @@ func (s *SFUService) setupPeerHandlers(peer *models.VoicePeer, room *models.Voic
 
 
 
+// triggerRenegotiation creates a new offer for a peer and sends it to the client
+func (s *SFUService) triggerRenegotiation(peer *models.VoicePeer, room *models.VoiceRoom) {
+	sfuLogger.Info("🔄 Triggering renegotiation for peer %s", peer.UserID)
+
+	// Create a new offer to renegotiate the connection
+	offer, err := peer.PeerConnection.CreateOffer(nil)
+	if err != nil {
+		sfuLogger.Error("Failed to create renegotiation offer for %s: %v", peer.UserID, err)
+		return
+	}
+
+	if err := peer.PeerConnection.SetLocalDescription(offer); err != nil {
+		sfuLogger.Error("Failed to set local description for renegotiation %s: %v", peer.UserID, err)
+		return
+	}
+
+	// Send the new offer to the client so they can accept the new track
+	response := models.VoiceResponse{
+		Type:   "offer",
+		RoomID: room.ID,
+		UserID: peer.UserID,
+		SDP:    peer.PeerConnection.LocalDescription(),
+	}
+
+	if err := peer.WSConnection.WriteJSON(response); err != nil {
+		sfuLogger.Error("Failed to send renegotiation offer to %s: %v", peer.UserID, err)
+		return
+	}
+
+	sfuLogger.Info("✅ Sent renegotiation offer to peer %s", peer.UserID)
+}
+
 func (s *SFUService) addExistingTracksToNewPeer(newPeer *models.VoicePeer, room *models.VoiceRoom) {
 	allPeers := room.GetAllPeers()
 	sfuLogger.Info("addExistingTracksToNewPeer: New peer %s joining, checking %d existing peers",
@@ -245,6 +277,9 @@ func (s *SFUService) forwardTrackToOthers(sender *models.VoicePeer, incomingTrac
 		}
 		sfuLogger.Info("✅ Added track from %s to peer %s", sender.UserID, otherPeer.UserID)
 
+		// Trigger renegotiation for the peer to receive the new track
+		go s.triggerRenegotiation(otherPeer, room)
+
 		
 		go func(peer *models.VoicePeer) {
 			rtcpBuf := make([]byte, 1500)
@@ -262,6 +297,26 @@ func (s *SFUService) forwardTrackToOthers(sender *models.VoicePeer, incomingTrac
 }
 
 
+
+func (s *SFUService) HandleAnswer(roomID, userID string, answer webrtc.SessionDescription) error {
+	room, err := s.roomManager.GetRoom(roomID)
+	if err != nil {
+		return err
+	}
+
+	peer, exists := room.GetPeer(userID)
+	if !exists {
+		return models.ErrPeerNotFound
+	}
+
+	if err := peer.PeerConnection.SetRemoteDescription(answer); err != nil {
+		sfuLogger.Error("Failed to set remote description (answer) for %s: %v", userID, err)
+		return err
+	}
+
+	sfuLogger.Info("✅ Set remote description (answer) for user %s", userID)
+	return nil
+}
 
 func (s *SFUService) HandleOffer(roomID, userID string, offer webrtc.SessionDescription) (*webrtc.SessionDescription, error) {
 	room, err := s.roomManager.GetRoom(roomID)

@@ -70,7 +70,7 @@ func HandleVoiceMessage(ws *websocket.Conn, userID string, messageBytes []byte) 
 
 	voiceLogger.Info("Voice action '%s' from user %s in room %s", msg.Action, userID, msg.RoomID)
 
-	
+
 	switch msg.Action {
 	case "join":
 		handleVoiceJoin(ws, msg)
@@ -78,6 +78,8 @@ func HandleVoiceMessage(ws *websocket.Conn, userID string, messageBytes []byte) 
 		handleVoiceLeave(ws, msg)
 	case "offer":
 		handleVoiceOffer(ws, msg)
+	case "answer":
+		handleVoiceAnswer(ws, msg)
 	case "ice_candidate":
 		handleVoiceICECandidate(ws, msg)
 	case "mute":
@@ -177,6 +179,22 @@ func handleVoiceOffer(ws *websocket.Conn, msg models.VoiceMessage) {
 	if err := ws.WriteJSON(response); err != nil {
 		voiceLogger.Error("Failed to send answer: %v", err)
 	}
+}
+
+
+func handleVoiceAnswer(ws *websocket.Conn, msg models.VoiceMessage) {
+	if msg.RoomID == "" || msg.SDP == nil {
+		sendVoiceError(ws, "Missing roomId or SDP")
+		return
+	}
+
+	if err := sfuService.HandleAnswer(msg.RoomID, msg.UserID, *msg.SDP); err != nil {
+		voiceLogger.Error("Failed to handle answer: %v", err)
+		sendVoiceError(ws, "Failed to process answer: "+err.Error())
+		return
+	}
+
+	voiceLogger.Info("Successfully processed answer from user %s", msg.UserID)
 }
 
 
