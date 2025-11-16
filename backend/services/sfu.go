@@ -160,22 +160,29 @@ func (s *SFUService) setupPeerHandlers(peer *models.VoicePeer, room *models.Voic
 
 
 func (s *SFUService) addExistingTracksToNewPeer(newPeer *models.VoicePeer, room *models.VoiceRoom) {
-	for _, existingPeer := range room.GetAllPeers() {
+	allPeers := room.GetAllPeers()
+	sfuLogger.Info("addExistingTracksToNewPeer: New peer %s joining, checking %d existing peers",
+		newPeer.UserID, len(allPeers))
+
+	for _, existingPeer := range allPeers {
 		if existingPeer.UserID == newPeer.UserID {
-			continue 
+			continue
 		}
 
-		
+
 		existingPeer.Mu.RLock()
-		for _, localTrack := range existingPeer.LocalTracks {
+		trackCount := len(existingPeer.LocalTracks)
+		sfuLogger.Info("Existing peer %s has %d local tracks", existingPeer.UserID, trackCount)
+
+		for i, localTrack := range existingPeer.LocalTracks {
 			_, err := newPeer.PeerConnection.AddTrack(localTrack)
 			if err != nil {
-				sfuLogger.Error("Failed to add existing track from %s to new peer %s: %v",
-					existingPeer.UserID, newPeer.UserID, err)
+				sfuLogger.Error("Failed to add existing track %d from %s to new peer %s: %v",
+					i, existingPeer.UserID, newPeer.UserID, err)
 				continue
 			}
-			sfuLogger.Info("Added existing track from %s to new peer %s",
-				existingPeer.UserID, newPeer.UserID)
+			sfuLogger.Info("✅ Successfully added track %d from %s to new peer %s (track ID: %s)",
+				i, existingPeer.UserID, newPeer.UserID, localTrack.ID())
 		}
 		existingPeer.Mu.RUnlock()
 	}
@@ -184,7 +191,8 @@ func (s *SFUService) addExistingTracksToNewPeer(newPeer *models.VoicePeer, room 
 
 
 func (s *SFUService) forwardTrackToOthers(sender *models.VoicePeer, incomingTrack *webrtc.TrackRemote, room *models.VoiceRoom) {
-	
+	sfuLogger.Info("🎵 forwardTrackToOthers: Received %s track from %s", incomingTrack.Kind(), sender.UserID)
+
 	localTrack, err := webrtc.NewTrackLocalStaticRTP(
 		incomingTrack.Codec().RTPCodecCapability,
 		fmt.Sprintf("audio-%s", sender.UserID),
@@ -197,6 +205,7 @@ func (s *SFUService) forwardTrackToOthers(sender *models.VoicePeer, incomingTrac
 
 	sender.Mu.Lock()
 	sender.LocalTracks = append(sender.LocalTracks, localTrack)
+	sfuLogger.Info("📊 Sender %s now has %d local tracks", sender.UserID, len(sender.LocalTracks))
 	sender.Mu.Unlock()
 
 	
@@ -221,17 +230,20 @@ func (s *SFUService) forwardTrackToOthers(sender *models.VoicePeer, incomingTrac
 		}
 	}()
 
-	
-	for _, otherPeer := range room.GetAllPeers() {
+	allPeers := room.GetAllPeers()
+	sfuLogger.Info("📤 Broadcasting track from %s to %d other peers", sender.UserID, len(allPeers)-1)
+
+	for _, otherPeer := range allPeers {
 		if otherPeer.UserID == sender.UserID {
-			continue 
+			continue
 		}
 
 		rtpSender, err := otherPeer.PeerConnection.AddTrack(localTrack)
 		if err != nil {
-			sfuLogger.Error("Failed to add track to peer %s: %v", otherPeer.UserID, err)
+			sfuLogger.Error("❌ Failed to add track to peer %s: %v", otherPeer.UserID, err)
 			continue
 		}
+		sfuLogger.Info("✅ Added track from %s to peer %s", sender.UserID, otherPeer.UserID)
 
 		
 		go func(peer *models.VoicePeer) {

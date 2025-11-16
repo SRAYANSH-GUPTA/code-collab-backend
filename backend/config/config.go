@@ -9,22 +9,18 @@ import (
 )
 
 type Config struct {
-
 	SupabaseURL     string
 	SupabaseAnonKey string
-
 
 	AWSRegion          string
 	AWSAccessKeyID     string
 	AWSSecretAccessKey string
-
 
 	LambdaARNTypeScript string
 	LambdaARNPython     string
 	LambdaARNDart       string
 	LambdaARNGo         string
 	LambdaARNCpp        string
-
 
 	Port string
 	Env  string
@@ -34,13 +30,13 @@ type Config struct {
 	UseMockLambda bool
 	UseMockAuth   bool
 
-	
-	
+	// Voice/WebRTC Configuration
+	// Best Practice: Use multiple STUN servers for redundancy
 	STUNServers []string
-	
-	TURNServers     []string
-	TURNUsername    string
-	TURNPassword    string
+	// Best Practice: TURN servers for users behind restrictive NATs/firewalls
+	TURNServers  []string
+	TURNUsername string
+	TURNPassword string
 }
 
 func Load() *Config {
@@ -49,7 +45,7 @@ func Load() *Config {
 		log.Println("No .env file found, using environment variables")
 	}
 
-	
+	// Best Practice: Use Google's public STUN servers as default (free and reliable)
 	defaultSTUN := []string{
 		"stun:stun.l.google.com:19302",
 		"stun:stun1.l.google.com:19302",
@@ -69,15 +65,15 @@ func Load() *Config {
 		LambdaARNCpp:        getEnv("LAMBDA_ARN_CPP", ""),
 		Port:                getEnv("PORT", "8080"),
 		Env:                 getEnv("ENV", "development"),
-		LokiURL:             getEnv("LOKI_URL", "http:
+		LokiURL:             getEnv("LOKI_URL", "http://loki:3100"),
 		UseMockLambda:       getBoolEnv("USE_MOCK_LAMBDA", false),
 		UseMockAuth:         getBoolEnv("USE_MOCK_AUTH", false),
 
-		
-		STUNServers:      getSliceEnv("STUN_SERVERS", defaultSTUN),
-		TURNServers:      getSliceEnv("TURN_SERVERS", []string{}),
-		TURNUsername:     getEnv("TURN_USERNAME", ""),
-		TURNPassword:     getEnv("TURN_PASSWORD", ""),
+		// Voice configuration
+		STUNServers:  getSliceEnv("STUN_SERVERS", defaultSTUN),
+		TURNServers:  getSliceEnv("TURN_SERVERS", []string{}),
+		TURNUsername: getEnv("TURN_USERNAME", ""),
+		TURNPassword: getEnv("TURN_PASSWORD", ""),
 	}
 }
 
@@ -99,8 +95,8 @@ func getBoolEnv(key string, defaultValue bool) bool {
 
 func getSliceEnv(key string, defaultValue []string) []string {
 	if value := os.Getenv(key); value != "" {
-		
-		
+		// Split by comma for multiple values
+		// Example: STUN_SERVERS=stun:server1.com:19302,stun:server2.com:19302
 		result := []string{}
 		for _, v := range splitAndTrim(value, ",") {
 			if v != "" {
