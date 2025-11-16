@@ -151,9 +151,25 @@ func (s *SFUService) setupPeerHandlers(peer *models.VoicePeer, room *models.Voic
 		}
 	})
 
-	
+
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		sfuLogger.Info("User %s connection state: %s", peer.UserID, state.String())
+
+		// Check if we need to trigger deferred renegotiation
+		if state == webrtc.PeerConnectionStateConnected {
+			peer.Mu.RLock()
+			needsRenegotiation := peer.NeedsRenegotiation
+			peer.Mu.RUnlock()
+
+			if needsRenegotiation {
+				sfuLogger.Info("⏩ Connection stable for %s, triggering deferred renegotiation", peer.UserID)
+				// Small delay to ensure connection is fully stable
+				go func() {
+					time.Sleep(500 * time.Millisecond)
+					s.triggerRenegotiation(peer, room)
+				}()
+			}
+		}
 	})
 }
 
@@ -164,8 +180,13 @@ func (s *SFUService) triggerRenegotiation(peer *models.VoicePeer, room *models.V
 	// Check if the connection is in a stable state before renegotiating
 	signalingState := peer.PeerConnection.SignalingState()
 	if signalingState != webrtc.SignalingStateStable {
-		sfuLogger.Info("⏸️  Skipping renegotiation for peer %s - signaling state is %s (not stable)",
+		sfuLogger.Info("⏸️  Marking peer %s for deferred renegotiation - signaling state is %s (not stable)",
 			peer.UserID, signalingState.String())
+
+		// Mark the peer as needing renegotiation when connection becomes stable
+		peer.Mu.Lock()
+		peer.NeedsRenegotiation = true
+		peer.Mu.Unlock()
 		return
 	}
 
@@ -195,6 +216,11 @@ func (s *SFUService) triggerRenegotiation(peer *models.VoicePeer, room *models.V
 		sfuLogger.Error("Failed to send renegotiation offer to %s: %v", peer.UserID, err)
 		return
 	}
+
+	// Clear the renegotiation flag
+	peer.Mu.Lock()
+	peer.NeedsRenegotiation = false
+	peer.Mu.Unlock()
 
 	sfuLogger.Info("✅ Sent renegotiation offer to peer %s", peer.UserID)
 }

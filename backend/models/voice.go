@@ -64,14 +64,17 @@ type VoicePeer struct {
 	JoinedAt       time.Time
 	LastActivity   time.Time
 
-	
+
 	LocalTracks    []*webrtc.TrackLocalStaticRTP
 	RemoteTracks   []*webrtc.TrackRemote
 
-	
+
 	PacketsLost    uint32
 	Jitter         float64
 	RTT            time.Duration
+
+	// Flag to indicate if renegotiation is needed when connection becomes stable
+	NeedsRenegotiation bool
 
 	Mu             sync.RWMutex
 }
