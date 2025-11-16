@@ -161,6 +161,14 @@ func (s *SFUService) setupPeerHandlers(peer *models.VoicePeer, room *models.Voic
 
 // triggerRenegotiation creates a new offer for a peer and sends it to the client
 func (s *SFUService) triggerRenegotiation(peer *models.VoicePeer, room *models.VoiceRoom) {
+	// Check if the connection is in a stable state before renegotiating
+	signalingState := peer.PeerConnection.SignalingState()
+	if signalingState != webrtc.SignalingStateStable {
+		sfuLogger.Info("⏸️  Skipping renegotiation for peer %s - signaling state is %s (not stable)",
+			peer.UserID, signalingState.String())
+		return
+	}
+
 	sfuLogger.Info("🔄 Triggering renegotiation for peer %s", peer.UserID)
 
 	// Create a new offer to renegotiate the connection
