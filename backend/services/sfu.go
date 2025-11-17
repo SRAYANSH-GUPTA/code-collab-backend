@@ -56,18 +56,20 @@ func NewSFUService(roomManager *RoomManager, stunServers, turnServers []string, 
 
 
 func (s *SFUService) HandleJoin(roomID, userID string, ws *websocket.Conn) error {
-	room := s.roomManager.GetOrCreateRoom(roomID, roomID)
+	sfuLogger.Info("🚀 HandleJoin - User %s joining room %s", userID, roomID)
 
-	
+	room := s.roomManager.GetOrCreateRoom(roomID, roomID)
+	sfuLogger.Info("📦 Room %s obtained/created (current peer count: %d)", roomID, room.GetPeerCount())
+
+	sfuLogger.Info("🔧 Creating peer connection for user %s with %d ICE servers", userID, len(s.config.ICEServers))
 	peerConnection, err := webrtc.NewPeerConnection(s.config)
 	if err != nil {
-		sfuLogger.Error("Failed to create peer connection for user %s: %v", userID, err)
+		sfuLogger.Error("❌ Failed to create peer connection for user %s: %v", userID, err)
 		return err
 	}
 
-	sfuLogger.Info("Created peer connection for user %s in room %s", userID, roomID)
+	sfuLogger.Info("✅ Created peer connection for user %s in room %s", userID, roomID)
 
-	
 	peer := &models.VoicePeer{
 		UserID:         userID,
 		PeerConnection: peerConnection,
@@ -80,18 +82,19 @@ func (s *SFUService) HandleJoin(roomID, userID string, ws *websocket.Conn) error
 		RemoteTracks:   make([]*webrtc.TrackRemote, 0),
 	}
 
-	
+	sfuLogger.Info("👤 Adding peer %s to room %s", userID, roomID)
 	if err := room.AddPeer(peer); err != nil {
+		sfuLogger.Error("❌ Failed to add peer %s to room: %v", userID, err)
 		peerConnection.Close()
 		return err
 	}
 
-	
+	sfuLogger.Info("🎧 Setting up peer handlers for user %s", userID)
 	s.setupPeerHandlers(peer, room)
 
-	sfuLogger.Info("User %s joined room %s (total: %d users)", userID, roomID, room.GetPeerCount())
+	sfuLogger.Info("✅ User %s successfully joined room %s (total: %d users)", userID, roomID, room.GetPeerCount())
 
-	
+	sfuLogger.Info("📢 Broadcasting room state for user_joined event")
 	s.broadcastRoomState(room, userID, "user_joined")
 
 	return nil
@@ -105,29 +108,45 @@ func (s *SFUService) setupPeerHandlers(peer *models.VoicePeer, room *models.Voic
 	
 	
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		sfuLogger.Info("Received track from user %s: %s", peer.UserID, track.Kind())
+		sfuLogger.Info("🎵 OnTrack FIRED - Received %s track from user %s (SSRC: %d, PayloadType: %d)",
+			track.Kind(), peer.UserID, track.SSRC(), track.PayloadType())
+
+		codec := track.Codec()
+		sfuLogger.Info("📝 Track codec - MimeType: %s, ClockRate: %d, Channels: %d",
+			codec.MimeType, codec.ClockRate, codec.Channels)
 
 		peer.Mu.Lock()
 		peer.RemoteTracks = append(peer.RemoteTracks, track)
+		trackCount := len(peer.RemoteTracks)
 		peer.Mu.Unlock()
 
-		
+		sfuLogger.Info("📊 User %s now has %d remote tracks", peer.UserID, trackCount)
+
+		sfuLogger.Info("🔀 Forwarding track from %s to other peers in room %s", peer.UserID, room.ID)
 		s.forwardTrackToOthers(peer, track, room)
 	})
 
 	
 	
 	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
-		sfuLogger.Info("User %s ICE state: %s", peer.UserID, state.String())
+		sfuLogger.Info("🧊 ICE Connection State Change - User %s: %s", peer.UserID, state.String())
 
 		switch state {
+		case webrtc.ICEConnectionStateNew:
+			sfuLogger.Info("🆕 User %s ICE connection is new", peer.UserID)
+		case webrtc.ICEConnectionStateChecking:
+			sfuLogger.Info("🔍 User %s ICE connection is checking", peer.UserID)
+		case webrtc.ICEConnectionStateConnected:
+			sfuLogger.Info("✅ User %s ICE connection is connected", peer.UserID)
+		case webrtc.ICEConnectionStateCompleted:
+			sfuLogger.Info("🎉 User %s ICE connection is completed", peer.UserID)
 		case webrtc.ICEConnectionStateDisconnected:
-			sfuLogger.Warn("User %s disconnected", peer.UserID)
+			sfuLogger.Warn("⚠️  User %s ICE disconnected", peer.UserID)
 		case webrtc.ICEConnectionStateFailed:
-			sfuLogger.Error("User %s connection failed", peer.UserID)
+			sfuLogger.Error("❌ User %s ICE connection failed", peer.UserID)
 			s.HandleLeave(room.ID, peer.UserID)
 		case webrtc.ICEConnectionStateClosed:
-			sfuLogger.Info("User %s connection closed", peer.UserID)
+			sfuLogger.Info("🚪 User %s ICE connection closed", peer.UserID)
 		}
 	})
 
@@ -135,8 +154,12 @@ func (s *SFUService) setupPeerHandlers(peer *models.VoicePeer, room *models.Voic
 	
 	pc.OnICECandidate(func(candidate *webrtc.ICECandidate) {
 		if candidate == nil {
+			sfuLogger.Info("🏁 ICE gathering complete for user %s (received nil candidate)", peer.UserID)
 			return
 		}
+
+		sfuLogger.Info("🧊 Generated ICE candidate for user %s - Type: %s, Protocol: %s",
+			peer.UserID, candidate.Typ.String(), candidate.Protocol.String())
 
 		candidateInit := candidate.ToJSON()
 		response := models.VoiceResponse{
@@ -146,29 +169,57 @@ func (s *SFUService) setupPeerHandlers(peer *models.VoicePeer, room *models.Voic
 			Candidate: &candidateInit,
 		}
 
+		sfuLogger.Info("📤 Sending ICE candidate to user %s via WebSocket", peer.UserID)
 		if err := peer.WSConnection.WriteJSON(response); err != nil {
-			sfuLogger.Error("Failed to send ICE candidate to user %s: %v", peer.UserID, err)
+			sfuLogger.Error("❌ Failed to send ICE candidate to user %s: %v", peer.UserID, err)
+		} else {
+			sfuLogger.Info("✅ Successfully sent ICE candidate to user %s", peer.UserID)
 		}
 	})
 
 
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		sfuLogger.Info("User %s connection state: %s", peer.UserID, state.String())
+		sfuLogger.Info("🔌 Peer Connection State Change - User %s: %s", peer.UserID, state.String())
 
-		// Check if we need to trigger deferred renegotiation
-		if state == webrtc.PeerConnectionStateConnected {
+		switch state {
+		case webrtc.PeerConnectionStateNew:
+			sfuLogger.Info("🆕 User %s peer connection is new", peer.UserID)
+		case webrtc.PeerConnectionStateConnecting:
+			sfuLogger.Info("🔗 User %s peer connection is connecting", peer.UserID)
+		case webrtc.PeerConnectionStateConnected:
+			sfuLogger.Info("✅ User %s peer connection is connected", peer.UserID)
+
 			peer.Mu.RLock()
 			needsRenegotiation := peer.NeedsRenegotiation
 			peer.Mu.RUnlock()
 
 			if needsRenegotiation {
 				sfuLogger.Info("⏩ Connection stable for %s, triggering deferred renegotiation", peer.UserID)
-				// Small delay to ensure connection is fully stable
 				go func() {
 					time.Sleep(500 * time.Millisecond)
 					s.triggerRenegotiation(peer, room)
 				}()
 			}
+		case webrtc.PeerConnectionStateDisconnected:
+			sfuLogger.Warn("⚠️  User %s peer connection disconnected", peer.UserID)
+			// Clean up the disconnected peer after a short delay
+			go func() {
+				time.Sleep(3 * time.Second)
+				if peer.PeerConnection.ConnectionState() == webrtc.PeerConnectionStateDisconnected {
+					sfuLogger.Warn("🧹 Auto-removing disconnected peer %s from room %s", peer.UserID, room.ID)
+					s.HandleLeave(room.ID, peer.UserID)
+				}
+			}()
+		case webrtc.PeerConnectionStateFailed:
+			sfuLogger.Error("❌ User %s peer connection failed", peer.UserID)
+			// Immediately remove failed connections
+			sfuLogger.Info("🧹 Removing failed peer %s from room %s", peer.UserID, room.ID)
+			s.HandleLeave(room.ID, peer.UserID)
+		case webrtc.PeerConnectionStateClosed:
+			sfuLogger.Info("🚪 User %s peer connection closed", peer.UserID)
+			// Immediately remove closed connections
+			sfuLogger.Info("🧹 Removing closed peer %s from room %s", peer.UserID, room.ID)
+			s.HandleLeave(room.ID, peer.UserID)
 		}
 	})
 }
@@ -205,15 +256,19 @@ func (s *SFUService) triggerRenegotiation(peer *models.VoicePeer, room *models.V
 	}
 
 	// Send the new offer to the client so they can accept the new track
+	localDesc := peer.PeerConnection.LocalDescription()
 	response := models.VoiceResponse{
 		Type:   "offer",
 		RoomID: room.ID,
 		UserID: peer.UserID,
-		SDP:    peer.PeerConnection.LocalDescription(),
+		SDP:    localDesc,
 	}
 
+	sfuLogger.Info("📤 Sending renegotiation offer to peer %s - SDP type: %s, SDP length: %d",
+		peer.UserID, localDesc.Type.String(), len(localDesc.SDP))
+
 	if err := peer.WSConnection.WriteJSON(response); err != nil {
-		sfuLogger.Error("Failed to send renegotiation offer to %s: %v", peer.UserID, err)
+		sfuLogger.Error("❌ Failed to send renegotiation offer to %s: %v", peer.UserID, err)
 		return
 	}
 
@@ -222,35 +277,60 @@ func (s *SFUService) triggerRenegotiation(peer *models.VoicePeer, room *models.V
 	peer.NeedsRenegotiation = false
 	peer.Mu.Unlock()
 
-	sfuLogger.Info("✅ Sent renegotiation offer to peer %s", peer.UserID)
+	sfuLogger.Info("✅ Successfully sent renegotiation offer to peer %s", peer.UserID)
 }
 
 func (s *SFUService) addExistingTracksToNewPeer(newPeer *models.VoicePeer, room *models.VoiceRoom) {
 	allPeers := room.GetAllPeers()
-	sfuLogger.Info("addExistingTracksToNewPeer: New peer %s joining, checking %d existing peers",
+	sfuLogger.Info("🎯 addExistingTracksToNewPeer: New peer %s joining room with %d total peers",
 		newPeer.UserID, len(allPeers))
 
+	tracksAdded := 0
 	for _, existingPeer := range allPeers {
 		if existingPeer.UserID == newPeer.UserID {
+			sfuLogger.Info("⏭️  Skipping self (peer %s)", existingPeer.UserID)
 			continue
 		}
 
+		// Check if the existing peer's connection is still valid
+		connState := existingPeer.PeerConnection.ConnectionState()
+		if connState == webrtc.PeerConnectionStateClosed || connState == webrtc.PeerConnectionStateFailed {
+			sfuLogger.Warn("⚠️  Skipping tracks from peer %s - connection state is %s", existingPeer.UserID, connState.String())
+			continue
+		}
 
 		existingPeer.Mu.RLock()
 		trackCount := len(existingPeer.LocalTracks)
-		sfuLogger.Info("Existing peer %s has %d local tracks", existingPeer.UserID, trackCount)
+		sfuLogger.Info("👤 Existing peer %s - LocalTracks: %d, Connection state: %s",
+			existingPeer.UserID, trackCount, connState.String())
+
+		if trackCount == 0 {
+			sfuLogger.Info("⏭️  Peer %s has no local tracks to add", existingPeer.UserID)
+			existingPeer.Mu.RUnlock()
+			continue
+		}
 
 		for i, localTrack := range existingPeer.LocalTracks {
+			sfuLogger.Info("🔀 Attempting to add track %d from %s to new peer %s (Track ID: %s, StreamID: %s)",
+				i, existingPeer.UserID, newPeer.UserID, localTrack.ID(), localTrack.StreamID())
+
 			_, err := newPeer.PeerConnection.AddTrack(localTrack)
 			if err != nil {
-				sfuLogger.Error("Failed to add existing track %d from %s to new peer %s: %v",
+				sfuLogger.Error("❌ Failed to add existing track %d from %s to new peer %s: %v",
 					i, existingPeer.UserID, newPeer.UserID, err)
 				continue
 			}
+			tracksAdded++
 			sfuLogger.Info("✅ Successfully added track %d from %s to new peer %s (track ID: %s)",
 				i, existingPeer.UserID, newPeer.UserID, localTrack.ID())
 		}
 		existingPeer.Mu.RUnlock()
+	}
+
+	if tracksAdded == 0 {
+		sfuLogger.Warn("⚠️  No tracks were added to new peer %s (existing peers may not have started sending audio yet)", newPeer.UserID)
+	} else {
+		sfuLogger.Info("✅ Successfully added %d tracks to new peer %s", tracksAdded, newPeer.UserID)
 	}
 }
 
@@ -304,9 +384,16 @@ func (s *SFUService) forwardTrackToOthers(sender *models.VoicePeer, incomingTrac
 			continue
 		}
 
+		// Check if the peer connection is in a valid state before adding track
+		connState := otherPeer.PeerConnection.ConnectionState()
+		if connState == webrtc.PeerConnectionStateClosed || connState == webrtc.PeerConnectionStateFailed {
+			sfuLogger.Warn("⚠️  Skipping peer %s - connection state is %s", otherPeer.UserID, connState.String())
+			continue
+		}
+
 		rtpSender, err := otherPeer.PeerConnection.AddTrack(localTrack)
 		if err != nil {
-			sfuLogger.Error("❌ Failed to add track to peer %s: %v", otherPeer.UserID, err)
+			sfuLogger.Error("❌ Failed to add track to peer %s (state: %s): %v", otherPeer.UserID, connState.String(), err)
 			continue
 		}
 		sfuLogger.Info("✅ Added track from %s to peer %s", sender.UserID, otherPeer.UserID)
@@ -333,15 +420,21 @@ func (s *SFUService) forwardTrackToOthers(sender *models.VoicePeer, incomingTrac
 
 
 func (s *SFUService) HandleAnswer(roomID, userID string, answer webrtc.SessionDescription) error {
+	sfuLogger.Info("🔵 HandleAnswer called for user %s in room %s with SDP type %s", userID, roomID, answer.Type)
+
 	room, err := s.roomManager.GetRoom(roomID)
 	if err != nil {
+		sfuLogger.Error("Failed to get room %s: %v", roomID, err)
 		return err
 	}
 
 	peer, exists := room.GetPeer(userID)
 	if !exists {
+		sfuLogger.Error("Peer %s not found in room %s", userID, roomID)
 		return models.ErrPeerNotFound
 	}
+
+	sfuLogger.Info("🔧 Setting remote description for peer %s (current signaling state: %s)", userID, peer.PeerConnection.SignalingState())
 
 	if err := peer.PeerConnection.SetRemoteDescription(answer); err != nil {
 		sfuLogger.Error("Failed to set remote description (answer) for %s: %v", userID, err)
@@ -353,40 +446,48 @@ func (s *SFUService) HandleAnswer(roomID, userID string, answer webrtc.SessionDe
 }
 
 func (s *SFUService) HandleOffer(roomID, userID string, offer webrtc.SessionDescription) (*webrtc.SessionDescription, error) {
+	sfuLogger.Info("📥 HandleOffer - Processing offer from user %s in room %s", userID, roomID)
+
 	room, err := s.roomManager.GetRoom(roomID)
 	if err != nil {
+		sfuLogger.Error("❌ Failed to get room %s: %v", roomID, err)
 		return nil, err
 	}
 
 	peer, exists := room.GetPeer(userID)
 	if !exists {
+		sfuLogger.Error("❌ Peer %s not found in room %s", userID, roomID)
 		return nil, models.ErrPeerNotFound
 	}
 
-	
+	sfuLogger.Info("🔧 Setting remote description (offer) for peer %s", userID)
 	if err := peer.PeerConnection.SetRemoteDescription(offer); err != nil {
-		sfuLogger.Error("Failed to set remote description: %v", err)
+		sfuLogger.Error("❌ Failed to set remote description: %v", err)
 		return nil, err
 	}
 
-	
-	
+	sfuLogger.Info("📦 Adding existing tracks from other peers to new peer %s", userID)
 	s.addExistingTracksToNewPeer(peer, room)
 
-	
+	sfuLogger.Info("📝 Creating answer for peer %s", userID)
 	answer, err := peer.PeerConnection.CreateAnswer(nil)
 	if err != nil {
-		sfuLogger.Error("Failed to create answer: %v", err)
+		sfuLogger.Error("❌ Failed to create answer: %v", err)
 		return nil, err
 	}
 
-	
+	sfuLogger.Info("🔧 Setting local description (answer) for peer %s", userID)
 	if err := peer.PeerConnection.SetLocalDescription(answer); err != nil {
-		sfuLogger.Error("Failed to set local description: %v", err)
+		sfuLogger.Error("❌ Failed to set local description: %v", err)
 		return nil, err
 	}
 
-	sfuLogger.Info("Created answer for user %s with %d existing tracks", userID, len(peer.LocalTracks))
+	peer.Mu.RLock()
+	localTrackCount := len(peer.LocalTracks)
+	peer.Mu.RUnlock()
+
+	sfuLogger.Info("✅ Created answer for user %s - Local tracks: %d, Answer SDP type: %s",
+		userID, localTrackCount, answer.Type)
 	return &answer, nil
 }
 

@@ -94,21 +94,32 @@ func HandleVoiceMessage(ws *websocket.Conn, userID string, messageBytes []byte) 
 
 
 func handleVoiceJoin(ws *websocket.Conn, msg models.VoiceMessage) {
+	voiceLogger.Info("🚀 handleVoiceJoin - User %s joining room %s", msg.UserID, msg.RoomID)
+
 	if msg.RoomID == "" {
+		voiceLogger.Error("❌ Join failed: Missing roomId for user %s", msg.UserID)
 		sendVoiceError(ws, "Missing roomId")
 		metrics.RecordVoiceOperation("join", "error")
 		return
 	}
 
+	voiceLogger.Info("📞 Calling sfuService.HandleJoin for user %s in room %s", msg.UserID, msg.RoomID)
 	if err := sfuService.HandleJoin(msg.RoomID, msg.UserID, ws); err != nil {
-		voiceLogger.Error("Failed to join room: %v", err)
+		voiceLogger.Error("❌ Failed to join room %s for user %s: %v", msg.RoomID, msg.UserID, err)
 		sendVoiceError(ws, "Failed to join room: "+err.Error())
 		metrics.RecordVoiceOperation("join", "error")
 		return
 	}
 
-	
-	stats, _ := sfuService.GetRoomStats(msg.RoomID)
+	voiceLogger.Info("✅ sfuService.HandleJoin succeeded for user %s", msg.UserID)
+
+	stats, err := sfuService.GetRoomStats(msg.RoomID)
+	if err != nil {
+		voiceLogger.Error("⚠️  Failed to get room stats: %v", err)
+	} else {
+		voiceLogger.Info("📊 Room stats retrieved: %d users in room %s", stats["peerCount"], msg.RoomID)
+	}
+
 	response := models.VoiceResponse{
 		Type:   "joined",
 		RoomID: msg.RoomID,
@@ -116,11 +127,14 @@ func handleVoiceJoin(ws *websocket.Conn, msg models.VoiceMessage) {
 		Users:  stats["users"].([]models.VoiceUser),
 	}
 
+	voiceLogger.Info("📤 Sending 'joined' response to user %s with %d users", msg.UserID, len(response.Users))
 	if err := ws.WriteJSON(response); err != nil {
-		voiceLogger.Error("Failed to send join response: %v", err)
+		voiceLogger.Error("❌ Failed to send join response to user %s: %v", msg.UserID, err)
+	} else {
+		voiceLogger.Info("✅ Successfully sent 'joined' response to user %s", msg.UserID)
 	}
 
-	
+
 	metrics.RecordVoiceOperation("join", "success")
 	updateGlobalVoiceMetrics()
 }
@@ -157,17 +171,23 @@ func handleVoiceLeave(ws *websocket.Conn, msg models.VoiceMessage) {
 
 
 func handleVoiceOffer(ws *websocket.Conn, msg models.VoiceMessage) {
+	voiceLogger.Info("📥 handleVoiceOffer - Received offer from user %s in room %s", msg.UserID, msg.RoomID)
+
 	if msg.RoomID == "" || msg.SDP == nil {
+		voiceLogger.Error("❌ Offer validation failed - roomId: %s, SDP: %v", msg.RoomID, msg.SDP != nil)
 		sendVoiceError(ws, "Missing roomId or SDP")
 		return
 	}
 
+	voiceLogger.Info("📝 Processing offer - SDP type: %s, SDP length: %d bytes", msg.SDP.Type, len(msg.SDP.SDP))
 	answer, err := sfuService.HandleOffer(msg.RoomID, msg.UserID, *msg.SDP)
 	if err != nil {
-		voiceLogger.Error("Failed to handle offer: %v", err)
+		voiceLogger.Error("❌ Failed to handle offer from user %s: %v", msg.UserID, err)
 		sendVoiceError(ws, "Failed to process offer: "+err.Error())
 		return
 	}
+
+	voiceLogger.Info("✅ Created answer for user %s - SDP type: %s", msg.UserID, answer.Type)
 
 	response := models.VoiceResponse{
 		Type:   "answer",
@@ -176,17 +196,25 @@ func handleVoiceOffer(ws *websocket.Conn, msg models.VoiceMessage) {
 		SDP:    answer,
 	}
 
+	voiceLogger.Info("📤 Sending answer to user %s", msg.UserID)
 	if err := ws.WriteJSON(response); err != nil {
-		voiceLogger.Error("Failed to send answer: %v", err)
+		voiceLogger.Error("❌ Failed to send answer to user %s: %v", msg.UserID, err)
+	} else {
+		voiceLogger.Info("✅ Successfully sent answer to user %s", msg.UserID)
 	}
 }
 
 
 func handleVoiceAnswer(ws *websocket.Conn, msg models.VoiceMessage) {
+	voiceLogger.Info("🔵 handleVoiceAnswer called for user %s in room %s", msg.UserID, msg.RoomID)
+
 	if msg.RoomID == "" || msg.SDP == nil {
+		voiceLogger.Warn("Missing roomId or SDP - roomId: %s, SDP: %v", msg.RoomID, msg.SDP)
 		sendVoiceError(ws, "Missing roomId or SDP")
 		return
 	}
+
+	voiceLogger.Info("📥 Processing answer with SDP type: %s", msg.SDP.Type)
 
 	if err := sfuService.HandleAnswer(msg.RoomID, msg.UserID, *msg.SDP); err != nil {
 		voiceLogger.Error("Failed to handle answer: %v", err)
@@ -194,25 +222,44 @@ func handleVoiceAnswer(ws *websocket.Conn, msg models.VoiceMessage) {
 		return
 	}
 
-	voiceLogger.Info("Successfully processed answer from user %s", msg.UserID)
+	voiceLogger.Info("✅ Successfully processed answer from user %s", msg.UserID)
 }
 
 
 
 func handleVoiceICECandidate(ws *websocket.Conn, msg models.VoiceMessage) {
+	voiceLogger.Info("🧊 handleVoiceICECandidate - Received from user %s in room %s", msg.UserID, msg.RoomID)
+
 	if msg.RoomID == "" || msg.Candidate == nil {
+		voiceLogger.Error("❌ ICE candidate validation failed - roomId: %s, candidate: %v", msg.RoomID, msg.Candidate != nil)
 		sendVoiceError(ws, "Missing roomId or candidate")
 		return
 	}
 
+	voiceLogger.Info("📝 ICE candidate details - Candidate: %s, SDPMid: %s, SDPMLineIndex: %d",
+		msg.Candidate.Candidate, stringOrEmpty(msg.Candidate.SDPMid), intOrZero(msg.Candidate.SDPMLineIndex))
+
 	if err := sfuService.HandleICECandidate(msg.RoomID, msg.UserID, *msg.Candidate); err != nil {
-		voiceLogger.Error("Failed to handle ICE candidate: %v", err)
+		voiceLogger.Error("❌ Failed to handle ICE candidate for user %s: %v", msg.UserID, err)
 		sendVoiceError(ws, "Failed to process ICE candidate: "+err.Error())
 		return
 	}
 
-	
-	voiceLogger.Info("Added ICE candidate for user %s", msg.UserID)
+	voiceLogger.Info("✅ Successfully added ICE candidate for user %s", msg.UserID)
+}
+
+func stringOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func intOrZero(i *uint16) uint16 {
+	if i == nil {
+		return 0
+	}
+	return *i
 }
 
 
