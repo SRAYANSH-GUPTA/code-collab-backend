@@ -51,9 +51,9 @@ jobs:
           EC2_HOST: ${{ secrets.EC2_HOST }}
         run: |
           echo "📤 Uploading deployment package..."
-          scp -i ~/.ssh/id_rsa /tmp/deploy.tar.gz $EC2_USERNAME@$EC2_HOST:/tmp/
+          scp -o StrictHostKeyChecking=no /tmp/deploy.tar.gz $EC2_USERNAME@$EC2_HOST:/tmp/
           echo "📤 Uploading container image..."
-          scp -i ~/.ssh/id_rsa /tmp/codecollab-backend.tar.gz $EC2_USERNAME@$EC2_HOST:/tmp/
+          scp -o StrictHostKeyChecking=no /tmp/codecollab-backend.tar.gz $EC2_USERNAME@$EC2_HOST:/tmp/
 
       - name: Deploy on EC2
         env:
@@ -75,7 +75,7 @@ jobs:
           TURN_PASSWORD: ${{ secrets.TURN_PASSWORD }}
           STUN_SERVERS: ${{ secrets.STUN_SERVERS }}
         run: |
-          ssh -i ~/.ssh/id_rsa $EC2_USERNAME@$EC2_HOST << 'ENDSSH'
+          ssh -o StrictHostKeyChecking=no $EC2_USERNAME@$EC2_HOST << 'ENDSSH'
             set -e  # Exit on error
 
             APP_DIR="/home/${{ secrets.EC2_USERNAME }}/codecollab-backend"
