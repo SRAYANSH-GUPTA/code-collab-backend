@@ -269,6 +269,8 @@
         let peerConnection = null;
         let localStream = null;
         let remoteAudioElements = new Map(); // Map of userID -> audio element
+        let statsInterval = null;
+        let isNegotiating = false; // Track if we're currently in a negotiation
 
         const statusEl = document.getElementById('status');
         const logEl = document.getElementById('log');
@@ -347,6 +349,13 @@
                 });
                 log('✅ Microphone access granted!', 'received');
 
+                // Log audio track details
+                const audioTracks = localStream.getAudioTracks();
+                log(`📊 Audio tracks count: ${audioTracks.length}`, 'info');
+                audioTracks.forEach((track, index) => {
+                    log(`🎵 Track ${index}: ${track.label} | enabled: ${track.enabled} | muted: ${track.muted} | readyState: ${track.readyState}`, 'info');
+                });
+
                 // Create peer connection with STUN servers
                 const configuration = {
                     iceServers: [
@@ -361,55 +370,88 @@
 
                 // Add local audio track to peer connection
                 localStream.getTracks().forEach(track => {
-                    peerConnection.addTrack(track, localStream);
-                    log(`➕ Added local ${track.kind} track`, 'info');
+                    const sender = peerConnection.addTrack(track, localStream);
+                    log(`➕ Added local ${track.kind} track to peer connection`, 'info');
+                    log(`   Track ID: ${track.id} | Label: ${track.label}`, 'info');
+                    log(`   Sender: ${sender ? 'Created successfully' : 'FAILED'}`, sender ? 'received' : 'error');
                 });
 
                 // Handle ICE candidates
                 peerConnection.onicecandidate = (event) => {
                     if (event.candidate) {
-                        log('🧊 Sending ICE candidate', 'sent');
+                        log(`🧊 ICE candidate generated: ${event.candidate.type} | ${event.candidate.protocol} | ${event.candidate.address || 'no-address'}`, 'info');
                         const msg = {
                             action: 'ice_candidate',
                             roomId: currentRoomId,
                             candidate: event.candidate.toJSON()
                         };
+                        log(`📤 Sending ICE candidate to server`, 'sent');
                         ws.send(JSON.stringify(msg));
                     } else {
-                        log('🧊 All ICE candidates sent', 'info');
+                        log('🧊 ICE gathering complete - All candidates sent', 'info');
                     }
                 };
 
                 // Handle incoming tracks (audio from other users)
                 peerConnection.ontrack = (event) => {
-                    log(`🔊 Received remote track from peer`, 'received');
+                    log(`🔊 ontrack event fired!`, 'received');
+                    log(`   Track kind: ${event.track.kind}`, 'info');
+                    log(`   Track ID: ${event.track.id}`, 'info');
+                    log(`   Track label: ${event.track.label}`, 'info');
+                    log(`   Track enabled: ${event.track.enabled}`, 'info');
+                    log(`   Track muted: ${event.track.muted}`, 'info');
+                    log(`   Track readyState: ${event.track.readyState}`, 'info');
+                    log(`   Streams count: ${event.streams.length}`, 'info');
 
                     const remoteStream = event.streams[0];
+                    log(`   Stream ID: ${remoteStream.id}`, 'info');
+                    log(`   Stream tracks: ${remoteStream.getTracks().length}`, 'info');
 
                     // Create or get audio element for this stream
                     let audioElement = document.createElement('audio');
                     audioElement.srcObject = remoteStream;
                     audioElement.autoplay = true;
                     audioElement.controls = false;
+                    audioElement.volume = 1.0;
 
                     // Add to DOM (hidden)
                     document.body.appendChild(audioElement);
+                    log(`🔊 Audio element created and added to DOM`, 'received');
 
-                    log('🔊 Playing remote audio stream', 'received');
+                    // Monitor audio element
+                    audioElement.onloadedmetadata = () => {
+                        log(`   Audio metadata loaded`, 'received');
+                    };
+
+                    audioElement.onplay = () => {
+                        log(`   ✅ Audio element started playing!`, 'received');
+                    };
+
+                    audioElement.onerror = (err) => {
+                        log(`   ❌ Audio element error: ${err}`, 'error');
+                    };
 
                     // Play the audio
-                    audioElement.play().catch(err => {
-                        log(`❌ Error playing audio: ${err.message}`, 'error');
-                    });
+                    audioElement.play()
+                        .then(() => {
+                            log('✅ Remote audio playback started successfully', 'received');
+                        })
+                        .catch(err => {
+                            log(`❌ Error playing audio: ${err.message}`, 'error');
+                        });
                 };
 
                 // Connection state monitoring
                 peerConnection.onconnectionstatechange = () => {
-                    log(`🔗 Connection state: ${peerConnection.connectionState}`, 'info');
+                    log(`🔗 Connection state changed: ${peerConnection.connectionState}`, 'info');
 
                     if (peerConnection.connectionState === 'connected') {
                         log('✅ WebRTC connection established!', 'received');
                         setStatus('✅ Voice connected - You can talk now!', 'success');
+
+                        // Start monitoring stats
+                        log('📊 Starting stats monitoring...', 'info');
+                        startStatsMonitoring();
                     } else if (peerConnection.connectionState === 'failed') {
                         log('❌ WebRTC connection failed', 'error');
                         setStatus('❌ Voice connection failed', 'error');
@@ -428,8 +470,20 @@
                     offerToReceiveAudio: true
                 });
 
+                log(`   Offer created - type: ${offer.type}`, 'info');
+                log(`   SDP length: ${offer.sdp.length} characters`, 'info');
+
                 await peerConnection.setLocalDescription(offer);
-                log('✅ Local description set', 'info');
+                log('✅ Local description set (offer)', 'info');
+
+                // Log all senders (tracks being sent)
+                const senders = peerConnection.getSenders();
+                log(`📊 Active senders count: ${senders.length}`, 'info');
+                senders.forEach((sender, index) => {
+                    if (sender.track) {
+                        log(`   Sender ${index}: ${sender.track.kind} track | enabled: ${sender.track.enabled} | readyState: ${sender.track.readyState}`, 'info');
+                    }
+                });
 
                 const msg = {
                     action: 'offer',
@@ -440,7 +494,8 @@
                     }
                 };
 
-                log('📤 SENDING WebRTC Offer', 'sent');
+                log('📤 SENDING WebRTC Offer to server', 'sent');
+                log(`   Offer SDP preview: ${offer.sdp.substring(0, 100)}...`, 'info');
                 ws.send(JSON.stringify(msg));
 
             } catch (error) {
@@ -449,8 +504,50 @@
             }
         }
 
+        // Start stats monitoring
+        function startStatsMonitoring() {
+            if (statsInterval) {
+                clearInterval(statsInterval);
+            }
+
+            statsInterval = setInterval(async () => {
+                if (!peerConnection) return;
+
+                try {
+                    const stats = await peerConnection.getStats();
+                    let outboundAudio = null;
+                    let inboundAudio = null;
+
+                    stats.forEach(report => {
+                        if (report.type === 'outbound-rtp' && report.kind === 'audio') {
+                            outboundAudio = report;
+                        } else if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+                            inboundAudio = report;
+                        }
+                    });
+
+                    if (outboundAudio) {
+                        log(`📊 OUTBOUND Audio Stats: bytesSent=${outboundAudio.bytesSent} | packetsSent=${outboundAudio.packetsSent}`, 'info');
+                    } else {
+                        log(`⚠️ No outbound audio stats found - audio may not be sending!`, 'warning');
+                    }
+
+                    if (inboundAudio) {
+                        log(`📊 INBOUND Audio Stats: bytesReceived=${inboundAudio.bytesReceived} | packetsReceived=${inboundAudio.packetsReceived}`, 'info');
+                    }
+                } catch (error) {
+                    log(`❌ Error getting stats: ${error.message}`, 'error');
+                }
+            }, 5000); // Every 5 seconds
+        }
+
         // Close WebRTC connection
         function closeWebRTC() {
+            if (statsInterval) {
+                clearInterval(statsInterval);
+                statsInterval = null;
+            }
+
             if (localStream) {
                 localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
@@ -475,7 +572,7 @@
         // Connect WebSocket
         document.getElementById('connect').onclick = () => {
             const token = 'test-user-' + Math.floor(Math.random() * 1000);
-            const url = `ws://10.105.87.113:8080/ws?token=${token}`;
+            const url = `wss://codeolab.srayansh.me/ws?token=${token}`;
 
             log(`🔗 Connecting to ${url}`, 'info');
             setStatus('🔄 Connecting to server...', 'info');
@@ -508,12 +605,81 @@
                     log('🎯 Starting WebRTC initialization...', 'info');
                     await initWebRTC();
 
+                } else if (data.type === 'offer') {
+                    // Handle renegotiation offer from server (when new tracks are added)
+                    log('🔄 Received renegotiation OFFER from server', 'received');
+                    log(`   Offer type: ${data.sdp.type}`, 'info');
+                    log(`   Offer SDP length: ${data.sdp.sdp.length} characters`, 'info');
+
+                    if (!peerConnection) {
+                        log('❌ ERROR: peerConnection is null, cannot handle renegotiation offer', 'error');
+                        return;
+                    }
+
+                    try {
+                        const currentState = peerConnection.signalingState;
+                        log(`   Current signaling state: ${currentState}`, 'info');
+
+                        // Handle glare condition - if we're in have-local-offer state, rollback first
+                        if (currentState === 'have-local-offer' || currentState === 'have-remote-offer') {
+                            log(`⚠️  Glare detected! Rolling back to stable state from ${currentState}`, 'warning');
+                            await peerConnection.setLocalDescription({type: 'rollback'});
+                            log('✅ Rolled back to stable state', 'info');
+                        }
+
+                        await peerConnection.setRemoteDescription(new window.RTCSessionDescription(data.sdp));
+                        log('✅ Remote description set (renegotiation offer)', 'received');
+
+                        // Create answer for renegotiation
+                        const answer = await peerConnection.createAnswer();
+                        await peerConnection.setLocalDescription(answer);
+                        log('✅ Created and set local description (renegotiation answer)', 'info');
+
+                        // Send answer back to server
+                        const answerMsg = {
+                            action: 'answer',
+                            roomId: currentRoomId,
+                            userId: currentUserId,
+                            sdp: {
+                                type: answer.type,
+                                sdp: answer.sdp
+                            }
+                        };
+                        log(`📤 Sending renegotiation answer to server - userId: ${currentUserId}, roomId: ${currentRoomId}`, 'sent');
+                        ws.send(JSON.stringify(answerMsg));
+                        log('✅ Answer sent successfully', 'sent');
+
+                        // Log receivers (tracks we're receiving)
+                        const receivers = peerConnection.getReceivers();
+                        log(`📊 Active receivers count after renegotiation: ${receivers.length}`, 'info');
+                        receivers.forEach((receiver, index) => {
+                            if (receiver.track) {
+                                log(`   Receiver ${index}: ${receiver.track.kind} track | enabled: ${receiver.track.enabled} | readyState: ${receiver.track.readyState}`, 'info');
+                            }
+                        });
+                    } catch (error) {
+                        log(`❌ Error handling renegotiation offer: ${error.message}`, 'error');
+                    }
+
                 } else if (data.type === 'answer') {
                     // Handle WebRTC answer from server
-                    log('📥 Received WebRTC answer', 'received');
+                    log('📥 Received WebRTC answer from server', 'received');
+                    log(`   Answer type: ${data.sdp.type}`, 'info');
+                    log(`   Answer SDP length: ${data.sdp.sdp.length} characters`, 'info');
+                    log(`   Answer SDP preview: ${data.sdp.sdp.substring(0, 100)}...`, 'info');
+
                     try {
                         await peerConnection.setRemoteDescription(new window.RTCSessionDescription(data.sdp));
-                        log('✅ Remote description set', 'received');
+                        log('✅ Remote description set (answer)', 'received');
+
+                        // Log receivers (tracks we're receiving)
+                        const receivers = peerConnection.getReceivers();
+                        log(`📊 Active receivers count: ${receivers.length}`, 'info');
+                        receivers.forEach((receiver, index) => {
+                            if (receiver.track) {
+                                log(`   Receiver ${index}: ${receiver.track.kind} track | enabled: ${receiver.track.enabled} | readyState: ${receiver.track.readyState}`, 'info');
+                            }
+                        });
                     } catch (error) {
                         log(`❌ Error setting remote description: ${error.message}`, 'error');
                     }
@@ -579,8 +745,9 @@
                     if (data.users) updateRoomInfo(data);
 
                 } else if (data.type === 'error') {
-                    setStatus(`❌ Error: ${data.error}`, 'error');
-                    log(`❌ ERROR: ${data.error}`, 'error');
+                    const errorMsg = data.error || data.message || 'Unknown error';
+                    setStatus(`❌ Error: ${errorMsg}`, 'error');
+                    log(`❌ ERROR: ${errorMsg}`, 'error');
                 }
             };
 
