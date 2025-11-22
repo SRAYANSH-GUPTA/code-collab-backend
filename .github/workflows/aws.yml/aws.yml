@@ -1,0 +1,187 @@
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches:
+      - master  # Changed from main to master
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    environment: production  # Use GitHub environment for protection
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts
+
+      - name: Build container image
+        run: |
+          echo "🔨 Building container image with Docker..."
+          docker build -t tracksheet-backend:latest -f Containerfile .
+          echo "💾 Saving image to tar file..."
+          docker save tracksheet-backend:latest | gzip > /tmp/tracksheet-backend.tar.gz
+          echo "✅ Image saved: $(du -h /tmp/tracksheet-backend.tar.gz | cut -f1)"
+
+      - name: Create deployment package
+        run: |
+          # Create tarball excluding sensitive files
+          tar -czf /tmp/deploy.tar.gz \
+            --exclude='.git' \
+            --exclude='.env' \
+            --exclude='*.log' \
+            --exclude='node_modules' \
+            --warning=no-file-changed \
+            -C . .
+
+      - name: Upload to EC2
+        env:
+          EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          echo "📤 Uploading deployment package..."
+          scp -i ~/.ssh/id_rsa /tmp/deploy.tar.gz $EC2_USERNAME@$EC2_HOST:/tmp/
+          echo "📤 Uploading container image..."
+          scp -i ~/.ssh/id_rsa /tmp/tracksheet-backend.tar.gz $EC2_USERNAME@$EC2_HOST:/tmp/
+
+      - name: Deploy on EC2
+        env:
+          EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          ANALYTICS_API_KEY: ${{ secrets.ANALYTICS_API_KEY }}
+          ANALYTICS_URL: ${{ secrets.ANALYTICS_URL }}
+        run: |
+          ssh -i ~/.ssh/id_rsa $EC2_USERNAME@$EC2_HOST << 'ENDSSH'
+            set -e  # Exit on error
+
+            APP_DIR="/home/${{ secrets.EC2_USERNAME }}/xfriends"
+            BACKUP_DIR="/home/${{ secrets.EC2_USERNAME }}/xfriends-backup-$(date +%Y%m%d-%H%M%S)"
+
+            echo "📦 Preparing deployment..."
+
+            # Create backup of current deployment
+            if [ -d "$APP_DIR" ]; then
+              echo "💾 Creating backup..."
+              cp -r "$APP_DIR" "$BACKUP_DIR"
+            fi
+
+            # Extract new code
+            mkdir -p "$APP_DIR"
+            cd "$APP_DIR"
+            tar -xzf /tmp/deploy.tar.gz
+            rm /tmp/deploy.tar.gz
+
+            # Create .env file with secrets (DO NOT ECHO THESE)
+            echo "🔐 Configuring environment..."
+            cat > .env << 'EOF'
+          ENVIRONMENT=production
+          MONGO_URI=${{ secrets.MONGO_URI }}
+          REDIS_URL=redis:6379
+          REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          ANALYTICS_API_KEY=${{ secrets.ANALYTICS_API_KEY }}
+          ANALYTICS_URL=${{ secrets.ANALYTICS_URL }}
+          PORT=8080
+          EOF
+
+            # Secure .env file
+            chmod 600 .env
+
+            # Deploy using podman-compose
+            echo "🛑 Stopping old containers..."
+            podman-compose down || true
+
+            echo "📦 Loading pre-built container image..."
+            gunzip -c /tmp/tracksheet-backend.tar.gz | podman load
+            rm /tmp/tracksheet-backend.tar.gz
+
+            echo "🏷️  Tagging image for podman-compose..."
+            podman tag tracksheet-backend:latest tracksheet-backend:local
+
+            echo "▶️  Starting new containers..."
+            podman-compose up -d --no-build
+
+            # Wait for app to start
+            echo "⏳ Waiting for application..."
+            sleep 10
+
+            # Health check
+            echo "🏥 Running health check..."
+            MAX_ATTEMPTS=15
+            for i in $(seq 1 $MAX_ATTEMPTS); do
+              if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+                echo "✅ Application is healthy!"
+                break
+              fi
+              if [ $i -eq $MAX_ATTEMPTS ]; then
+                echo "❌ Health check failed!"
+                echo "Rolling back..."
+                podman-compose down
+                if [ -d "$BACKUP_DIR" ]; then
+                  rm -rf "$APP_DIR"
+                  mv "$BACKUP_DIR" "$APP_DIR"
+                  cd "$APP_DIR"
+                  podman-compose up -d
+                fi
+                exit 1
+              fi
+              echo "Waiting... ($i/$MAX_ATTEMPTS)"
+              sleep 2
+            done
+
+            # Clean up old images
+            echo "🧹 Cleaning up..."
+            podman image prune -f --filter "until=72h" || true
+
+            # Remove backup if successful
+            if [ -d "$BACKUP_DIR" ]; then
+              rm -rf "$BACKUP_DIR"
+            fi
+
+            echo "✅ Deployment successful!"
+            podman-compose ps
+          ENDSSH
+
+      - name: Verify deployment
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          echo "🔍 Verifying deployment..."
+          # Wait a bit for Nginx to pick up changes
+          sleep 5
+
+          # Test HTTPS endpoint
+          if curl -f -k https://$EC2_HOST/health; then
+            echo "✅ HTTPS endpoint is healthy"
+          else
+            echo "⚠️  Warning: HTTPS endpoint check failed"
+          fi
+
+      - name: Deployment notification
+        if: success()
+        run: |
+          echo "✅ Deployment to production successful!"
+          echo "🔗 Application: https://${{ secrets.EC2_HOST }}"
+          echo "📝 Commit: ${{ github.sha }}"
+          echo "👤 Deployed by: ${{ github.actor }}"
+
+      - name: Rollback notification
+        if: failure()
+        run: |
+          echo "❌ Deployment failed!"
+          echo "🔄 Automatic rollback initiated"
+          echo "📝 Failed commit: ${{ github.sha }}"
