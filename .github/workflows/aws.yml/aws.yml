@@ -29,10 +29,10 @@ jobs:
       - name: Build container image
         run: |
           echo "🔨 Building container image with Docker..."
-          docker build -t tracksheet-backend:latest -f Containerfile .
+          docker build -t codecollab-backend:latest -f backend/Dockerfile backend/
           echo "💾 Saving image to tar file..."
-          docker save tracksheet-backend:latest | gzip > /tmp/tracksheet-backend.tar.gz
-          echo "✅ Image saved: $(du -h /tmp/tracksheet-backend.tar.gz | cut -f1)"
+          docker save codecollab-backend:latest | gzip > /tmp/codecollab-backend.tar.gz
+          echo "✅ Image saved: $(du -h /tmp/codecollab-backend.tar.gz | cut -f1)"
 
       - name: Create deployment package
         run: |
@@ -53,23 +53,33 @@ jobs:
           echo "📤 Uploading deployment package..."
           scp -i ~/.ssh/id_rsa /tmp/deploy.tar.gz $EC2_USERNAME@$EC2_HOST:/tmp/
           echo "📤 Uploading container image..."
-          scp -i ~/.ssh/id_rsa /tmp/tracksheet-backend.tar.gz $EC2_USERNAME@$EC2_HOST:/tmp/
+          scp -i ~/.ssh/id_rsa /tmp/codecollab-backend.tar.gz $EC2_USERNAME@$EC2_HOST:/tmp/
 
       - name: Deploy on EC2
         env:
           EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
           EC2_HOST: ${{ secrets.EC2_HOST }}
-          MONGO_URI: ${{ secrets.MONGO_URI }}
-          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          ANALYTICS_API_KEY: ${{ secrets.ANALYTICS_API_KEY }}
-          ANALYTICS_URL: ${{ secrets.ANALYTICS_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+          LAMBDA_ARN_TYPESCRIPT: ${{ secrets.LAMBDA_ARN_TYPESCRIPT }}
+          LAMBDA_ARN_PYTHON: ${{ secrets.LAMBDA_ARN_PYTHON }}
+          LAMBDA_ARN_DART: ${{ secrets.LAMBDA_ARN_DART }}
+          LAMBDA_ARN_GO: ${{ secrets.LAMBDA_ARN_GO }}
+          LAMBDA_ARN_CPP: ${{ secrets.LAMBDA_ARN_CPP }}
+          TURN_SERVERS: ${{ secrets.TURN_SERVERS }}
+          TURN_USERNAME: ${{ secrets.TURN_USERNAME }}
+          TURN_PASSWORD: ${{ secrets.TURN_PASSWORD }}
+          STUN_SERVERS: ${{ secrets.STUN_SERVERS }}
         run: |
           ssh -i ~/.ssh/id_rsa $EC2_USERNAME@$EC2_HOST << 'ENDSSH'
             set -e  # Exit on error
 
-            APP_DIR="/home/${{ secrets.EC2_USERNAME }}/xfriends"
-            BACKUP_DIR="/home/${{ secrets.EC2_USERNAME }}/xfriends-backup-$(date +%Y%m%d-%H%M%S)"
+            APP_DIR="/home/${{ secrets.EC2_USERNAME }}/codecollab-backend"
+            BACKUP_DIR="/home/${{ secrets.EC2_USERNAME }}/codecollab-backup-$(date +%Y%m%d-%H%M%S)"
 
             echo "📦 Preparing deployment..."
 
@@ -80,40 +90,65 @@ jobs:
             fi
 
             # Extract new code
-            mkdir -p "$APP_DIR"
+            mkdir -p "$APP_DIR/backend"
             cd "$APP_DIR"
             tar -xzf /tmp/deploy.tar.gz
             rm /tmp/deploy.tar.gz
 
             # Create .env file with secrets (DO NOT ECHO THESE)
             echo "🔐 Configuring environment..."
-            cat > .env << 'EOF'
-          ENVIRONMENT=production
-          MONGO_URI=${{ secrets.MONGO_URI }}
-          REDIS_URL=redis:6379
-          REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
-          JWT_SECRET=${{ secrets.JWT_SECRET }}
-          ANALYTICS_API_KEY=${{ secrets.ANALYTICS_API_KEY }}
-          ANALYTICS_URL=${{ secrets.ANALYTICS_URL }}
+            cat > backend/.env << 'EOF'
+          ENV=production
           PORT=8080
+
+          # Supabase Authentication
+          SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
+
+          # AWS Configuration
+          AWS_REGION=${{ secrets.AWS_REGION }}
+          AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }}
+
+          # Lambda ARNs for Code Execution
+          LAMBDA_ARN_TYPESCRIPT=${{ secrets.LAMBDA_ARN_TYPESCRIPT }}
+          LAMBDA_ARN_PYTHON=${{ secrets.LAMBDA_ARN_PYTHON }}
+          LAMBDA_ARN_DART=${{ secrets.LAMBDA_ARN_DART }}
+          LAMBDA_ARN_GO=${{ secrets.LAMBDA_ARN_GO }}
+          LAMBDA_ARN_CPP=${{ secrets.LAMBDA_ARN_CPP }}
+
+          # WebRTC Configuration
+          TURN_SERVERS=${{ secrets.TURN_SERVERS }}
+          TURN_USERNAME=${{ secrets.TURN_USERNAME }}
+          TURN_PASSWORD=${{ secrets.TURN_PASSWORD }}
+          STUN_SERVERS=${{ secrets.STUN_SERVERS }}
+
+          # Monitoring
+          LOKI_URL=http://loki:3100
+
+          # Feature Flags
+          USE_MOCK_LAMBDA=false
+          USE_MOCK_AUTH=false
           EOF
 
             # Secure .env file
-            chmod 600 .env
+            chmod 600 backend/.env
 
-            # Deploy using podman-compose
+            # Deploy using docker-compose
             echo "🛑 Stopping old containers..."
-            podman-compose down || true
+            cd backend
+            docker-compose down || true
 
             echo "📦 Loading pre-built container image..."
-            gunzip -c /tmp/tracksheet-backend.tar.gz | podman load
-            rm /tmp/tracksheet-backend.tar.gz
+            gunzip -c /tmp/codecollab-backend.tar.gz | docker load
+            rm /tmp/codecollab-backend.tar.gz
 
-            echo "🏷️  Tagging image for podman-compose..."
-            podman tag tracksheet-backend:latest tracksheet-backend:local
+            echo "🏷️  Tagging image for docker-compose..."
+            docker tag codecollab-backend:latest codecollab-backend:local
 
             echo "▶️  Starting new containers..."
-            podman-compose up -d --no-build
+            docker-compose up -d --no-build
 
             # Wait for app to start
             echo "⏳ Waiting for application..."
@@ -130,12 +165,12 @@ jobs:
               if [ $i -eq $MAX_ATTEMPTS ]; then
                 echo "❌ Health check failed!"
                 echo "Rolling back..."
-                podman-compose down
+                docker-compose down
                 if [ -d "$BACKUP_DIR" ]; then
                   rm -rf "$APP_DIR"
                   mv "$BACKUP_DIR" "$APP_DIR"
-                  cd "$APP_DIR"
-                  podman-compose up -d
+                  cd "$APP_DIR/backend"
+                  docker-compose up -d
                 fi
                 exit 1
               fi
@@ -145,7 +180,7 @@ jobs:
 
             # Clean up old images
             echo "🧹 Cleaning up..."
-            podman image prune -f --filter "until=72h" || true
+            docker image prune -f --filter "until=72h" || true
 
             # Remove backup if successful
             if [ -d "$BACKUP_DIR" ]; then
@@ -153,7 +188,7 @@ jobs:
             fi
 
             echo "✅ Deployment successful!"
-            podman-compose ps
+            docker-compose ps
           ENDSSH
 
       - name: Verify deployment
