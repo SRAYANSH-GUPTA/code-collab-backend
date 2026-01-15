@@ -41,18 +41,11 @@ import (
 // @description Authentication token passed as query parameter for WebSocket connections
 
 func main() {
-	
+
 	cfg := config.Load()
 
 	logger := utils.NewLogger("main")
-	logger.Info("Starting Code Linting Platform Backend")
-	logger.Info("Environment: %s", cfg.Env)
-	logger.Info("Port: %s", cfg.Port)
-	logger.Info("Mock Lambda: %v", cfg.UseMockLambda)
-	logger.Info("Mock Auth: %v", cfg.UseMockAuth)
 
-	// Initialize voice service
-	// Best Practice: Initialize critical services at startup
 	handlers.InitVoiceService(cfg.STUNServers, cfg.TURNServers, cfg.TURNUsername, cfg.TURNPassword)
 	logger.Info("Voice service initialized with %d STUN and %d TURN servers", len(cfg.STUNServers), len(cfg.TURNServers))
 
@@ -66,14 +59,16 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	
 	mux.HandleFunc("/ws", handlers.HandleWebSocket(cfg))
-	mux.HandleFunc("/health", handlers.HandleHealth)
-	mux.Handle("/metrics", promhttp.Handler())
 
-	mux.HandleFunc("/swagger.yaml", handlers.ServeSwaggerYAML)
-	mux.HandleFunc("/docs", handlers.ServeSwaggerUI)
 
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	apiMux := http.NewServeMux()
+	apiMux.HandleFunc("/health", handlers.HandleHealth)
+	apiMux.Handle("/metrics", promhttp.Handler())
+	apiMux.HandleFunc("/swagger.yaml", handlers.ServeSwaggerYAML)
+	apiMux.HandleFunc("/docs", handlers.ServeSwaggerUI)
+	apiMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
@@ -88,7 +83,17 @@ func main() {
 		fmt.Fprintf(w, `{"message":"Code Linting Platform API","version":"1.0.0","endpoints":{"/ws":"WebSocket endpoint","/health":"Health check","/docs":"API Documentation","/metrics":"Prometheus metrics"}}`)
 	})
 
-	handler := middleware.LoggingMiddleware(lokiLogger)(middleware.MetricsMiddleware(mux))
+	wrappedAPIHandler := middleware.LoggingMiddleware(lokiLogger)(middleware.MetricsMiddleware(apiMux))
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ws" {
+
+			mux.ServeHTTP(w, r)
+		} else {
+
+			wrappedAPIHandler.ServeHTTP(w, r)
+		}
+	})
 
 	server := &http.Server{
 		Addr:         ":" + cfg.Port,
@@ -97,7 +102,6 @@ func main() {
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
-
 
 	go func() {
 		logger.Info("WebSocket endpoint: ws://localhost:%s/ws", cfg.Port)
@@ -110,14 +114,10 @@ func main() {
 		}
 	}()
 
-	
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	logger.Info("Shutting down server...")
-
-	
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -125,5 +125,5 @@ func main() {
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}
 
-	logger.Info("Server stopped")
+	logger.Info("Server shutdown")
 }

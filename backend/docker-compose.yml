@@ -54,12 +54,12 @@ services:
     container_name: grafana
     user: "0"
     ports:
-      - "3000:3000"
+      - "3200:3200"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_SERVER_ROOT_URL=http://localhost:3200
       - GF_INSTALL_PLUGINS=
       - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
     volumes:

@@ -35,9 +35,9 @@ echo "Starting Grafana..."
 docker run -d \
   --name grafana \
   --network monitoring-net \
-  -p 3000:3000 \
-  -e GF_SECURITY_ADMIN_USER=admin \
-  -e GF_SECURITY_ADMIN_PASSWORD=admin123 \
+  -p 3200:3200 \
+  -e GF_SECURITY_ADMIN_USER=gangleader \
+  -e GF_SECURITY_ADMIN_PASSWORD=gangleader@shinchan\
   -e GF_USERS_ALLOW_SIGN_UP=false \
   -v "$(pwd)/grafana/provisioning:/etc/grafana/provisioning" \
   -v "$(pwd)/grafana/dashboards:/var/lib/grafana/dashboards" \
@@ -61,7 +61,7 @@ echo ""
 echo "Check status with: docker ps"
 echo ""
 echo "Access URLs:"
-echo "  Grafana:    http://localhost:3000 (admin/admin123)"
+echo "  Grafana:    http://localhost:3200 (gangleader/gangleader@shinchan)"
 echo "  Prometheus: http://localhost:9090"
 echo "  Loki:       http://localhost:3100"
 echo "  App:        http://localhost:8080"
