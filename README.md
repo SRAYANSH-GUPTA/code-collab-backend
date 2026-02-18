@@ -1,5 +1,6 @@
 # Real-Time Code Linting Platform
 
+
 A real-time code linting platform that analyzes code as users type and displays errors instantly, similar to VS Code's IntelliSense.
 
 ## Architecture
