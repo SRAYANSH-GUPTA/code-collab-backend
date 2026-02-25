@@ -20,10 +20,11 @@ var sfuLogger = utils.NewLogger("sfu")
 type SFUService struct {
 	roomManager *RoomManager
 	config      webrtc.Configuration
+	api         *webrtc.API
 }
 
 
-func NewSFUService(roomManager *RoomManager, stunServers, turnServers []string, turnUsername, turnPassword string) *SFUService {
+func NewSFUService(roomManager *RoomManager, stunServers, turnServers []string, turnUsername, turnPassword, publicIP string, udpMinPort, udpMaxPort uint16) *SFUService {
 	
 	iceServers := []webrtc.ICEServer{}
 
@@ -43,8 +44,30 @@ func NewSFUService(roomManager *RoomManager, stunServers, turnServers []string, 
 		})
 	}
 
+	// Configure the setting engine for NAT traversal (required for AWS/cloud deployments)
+	settingEngine := webrtc.SettingEngine{}
+
+	// If a public IP is configured, tell pion to use it in ICE candidates
+	// instead of the private IP. This is essential when the server is behind a NAT.
+	if publicIP != "" {
+		settingEngine.SetNAT1To1IPs([]string{publicIP}, webrtc.ICECandidateTypeHost)
+		sfuLogger.Info("🌐 Configured public IP for ICE candidates: %s", publicIP)
+	}
+
+	// Restrict UDP port range so only specific ports need to be opened in the firewall/security group
+	if udpMinPort > 0 && udpMaxPort > 0 && udpMaxPort >= udpMinPort {
+		if err := settingEngine.SetEphemeralUDPPortRange(udpMinPort, udpMaxPort); err != nil {
+			sfuLogger.Error("❌ Failed to set UDP port range %d-%d: %v", udpMinPort, udpMaxPort, err)
+		} else {
+			sfuLogger.Info("🔌 Configured UDP port range: %d-%d", udpMinPort, udpMaxPort)
+		}
+	}
+
+	api := webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine))
+
 	return &SFUService{
 		roomManager: roomManager,
+		api:         api,
 		config: webrtc.Configuration{
 			ICEServers: iceServers,
 			
@@ -62,7 +85,7 @@ func (s *SFUService) HandleJoin(roomID, userID string, ws *websocket.Conn) error
 	sfuLogger.Info("📦 Room %s obtained/created (current peer count: %d)", roomID, room.GetPeerCount())
 
 	sfuLogger.Info("🔧 Creating peer connection for user %s with %d ICE servers", userID, len(s.config.ICEServers))
-	peerConnection, err := webrtc.NewPeerConnection(s.config)
+	peerConnection, err := s.api.NewPeerConnection(s.config)
 	if err != nil {
 		sfuLogger.Error("❌ Failed to create peer connection for user %s: %v", userID, err)
 		return err

@@ -37,6 +37,13 @@ type Config struct {
 	TURNServers  []string
 	TURNUsername string
 	TURNPassword string
+
+	// Public IP of the server (required when behind NAT, e.g. on AWS EC2)
+	// The SFU advertises this IP in ICE candidates so clients can reach it
+	PublicIP string
+	// UDP port range for WebRTC media traffic (open these in your security group)
+	UDPMinPort uint16
+	UDPMaxPort uint16
 }
 
 func Load() *Config {
@@ -74,12 +81,24 @@ func Load() *Config {
 		TURNServers:  getSliceEnv("TURN_SERVERS", []string{}),
 		TURNUsername: getEnv("TURN_USERNAME", ""),
 		TURNPassword: getEnv("TURN_PASSWORD", ""),
+		PublicIP:     getEnv("PUBLIC_IP", ""),
+		UDPMinPort:   getUint16Env("UDP_MIN_PORT", 50000),
+		UDPMaxPort:   getUint16Env("UDP_MAX_PORT", 50100),
 	}
 }
 
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultValue
+}
+
+func getUint16Env(key string, defaultValue uint16) uint16 {
+	if value := os.Getenv(key); value != "" {
+		if intValue, err := strconv.ParseUint(value, 10, 16); err == nil {
+			return uint16(intValue)
+		}
 	}
 	return defaultValue
 }

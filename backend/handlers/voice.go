@@ -21,9 +21,9 @@ var (
 
 
 
-func InitVoiceService(stunServers, turnServers []string, turnUsername, turnPassword string) {
+func InitVoiceService(stunServers, turnServers []string, turnUsername, turnPassword, publicIP string, udpMinPort, udpMaxPort uint16) {
 	roomManager := services.NewRoomManager()
-	sfuService = services.NewSFUService(roomManager, stunServers, turnServers, turnUsername, turnPassword)
+	sfuService = services.NewSFUService(roomManager, stunServers, turnServers, turnUsername, turnPassword, publicIP, udpMinPort, udpMaxPort)
 	voiceLogger.Info("Voice service initialized with %d STUN servers and %d TURN servers", len(stunServers), len(turnServers))
 
 	

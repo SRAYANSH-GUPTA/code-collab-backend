@@ -46,8 +46,8 @@ func main() {
 
 	logger := utils.NewLogger("main")
 
-	handlers.InitVoiceService(cfg.STUNServers, cfg.TURNServers, cfg.TURNUsername, cfg.TURNPassword)
-	logger.Info("Voice service initialized with %d STUN and %d TURN servers", len(cfg.STUNServers), len(cfg.TURNServers))
+	handlers.InitVoiceService(cfg.STUNServers, cfg.TURNServers, cfg.TURNUsername, cfg.TURNPassword, cfg.PublicIP, cfg.UDPMinPort, cfg.UDPMaxPort)
+	logger.Info("Voice service initialized with %d STUN and %d TURN servers (public IP: %s)", len(cfg.STUNServers), len(cfg.TURNServers), cfg.PublicIP)
 
 	metrics.StartSystemMetricsCollector()
 	logger.Info("System metrics collector started")
