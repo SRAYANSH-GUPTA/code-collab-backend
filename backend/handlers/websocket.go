@@ -124,7 +124,8 @@ func handleConnection(conn *websocket.Conn, userID string, cfg *config.Config) {
 		
 		
 		if actionMsg.Action == "join" || actionMsg.Action == "leave" ||
-		   actionMsg.Action == "offer" || actionMsg.Action == "ice_candidate" ||
+		   actionMsg.Action == "offer" || actionMsg.Action == "answer" ||
+		   actionMsg.Action == "ice_candidate" ||
 		   actionMsg.Action == "mute" || actionMsg.Action == "unmute" {
 			HandleVoiceMessage(conn, userID, messageBytes)
 			continue
