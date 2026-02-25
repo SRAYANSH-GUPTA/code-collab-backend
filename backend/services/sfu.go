@@ -170,7 +170,7 @@ func (s *SFUService) setupPeerHandlers(peer *models.VoicePeer, room *models.Voic
 		}
 
 		sfuLogger.Info("📤 Sending ICE candidate to user %s via WebSocket", peer.UserID)
-		if err := peer.WSConnection.WriteJSON(response); err != nil {
+		if err := peer.SendJSON(response); err != nil {
 			sfuLogger.Error("❌ Failed to send ICE candidate to user %s: %v", peer.UserID, err)
 		} else {
 			sfuLogger.Info("✅ Successfully sent ICE candidate to user %s", peer.UserID)
@@ -267,7 +267,7 @@ func (s *SFUService) triggerRenegotiation(peer *models.VoicePeer, room *models.V
 	sfuLogger.Info("📤 Sending renegotiation offer to peer %s - SDP type: %s, SDP length: %d",
 		peer.UserID, localDesc.Type.String(), len(localDesc.SDP))
 
-	if err := peer.WSConnection.WriteJSON(response); err != nil {
+	if err := peer.SendJSON(response); err != nil {
 		sfuLogger.Error("❌ Failed to send renegotiation offer to %s: %v", peer.UserID, err)
 		return
 	}
@@ -573,7 +573,7 @@ func (s *SFUService) broadcastRoomState(room *models.VoiceRoom, triggerUserID, e
 	jsonData, _ := json.Marshal(response)
 
 	for _, peer := range room.GetAllPeers() {
-		if err := peer.WSConnection.WriteMessage(websocket.TextMessage, jsonData); err != nil {
+		if err := peer.SendMessage(websocket.TextMessage, jsonData); err != nil {
 			sfuLogger.Error("Failed to broadcast to user %s: %v", peer.UserID, err)
 		}
 	}
@@ -599,4 +599,17 @@ func (s *SFUService) GetRoomStats(roomID string) (map[string]interface{}, error)
 
 func (s *SFUService) GetRoomManager() *RoomManager {
 	return s.roomManager
+}
+
+// SendToUser safely writes a JSON message to a user's WebSocket connection via the write mutex.
+func (s *SFUService) SendToUser(roomID, userID string, msg interface{}) error {
+	room, err := s.roomManager.GetRoom(roomID)
+	if err != nil {
+		return err
+	}
+	peer, exists := room.GetPeer(userID)
+	if !exists {
+		return models.ErrPeerNotFound
+	}
+	return peer.SendJSON(msg)
 }

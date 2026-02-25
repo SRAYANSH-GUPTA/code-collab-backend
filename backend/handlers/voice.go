@@ -128,7 +128,7 @@ func handleVoiceJoin(ws *websocket.Conn, msg models.VoiceMessage) {
 	}
 
 	voiceLogger.Info("📤 Sending 'joined' response to user %s with %d users", msg.UserID, len(response.Users))
-	if err := ws.WriteJSON(response); err != nil {
+	if err := sfuService.SendToUser(msg.RoomID, msg.UserID, response); err != nil {
 		voiceLogger.Error("❌ Failed to send join response to user %s: %v", msg.UserID, err)
 	} else {
 		voiceLogger.Info("✅ Successfully sent 'joined' response to user %s", msg.UserID)
@@ -197,7 +197,7 @@ func handleVoiceOffer(ws *websocket.Conn, msg models.VoiceMessage) {
 	}
 
 	voiceLogger.Info("📤 Sending answer to user %s", msg.UserID)
-	if err := ws.WriteJSON(response); err != nil {
+	if err := sfuService.SendToUser(msg.RoomID, msg.UserID, response); err != nil {
 		voiceLogger.Error("❌ Failed to send answer to user %s: %v", msg.UserID, err)
 	} else {
 		voiceLogger.Info("✅ Successfully sent answer to user %s", msg.UserID)

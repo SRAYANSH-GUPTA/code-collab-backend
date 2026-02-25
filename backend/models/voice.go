@@ -77,6 +77,22 @@ type VoicePeer struct {
 	NeedsRenegotiation bool
 
 	Mu             sync.RWMutex
+	wsMu           sync.Mutex // protects concurrent WebSocket writes
+}
+
+// SendJSON safely writes a JSON message to the peer's WebSocket connection.
+// It serializes concurrent writes to avoid corrupting WebSocket frames.
+func (p *VoicePeer) SendJSON(v interface{}) error {
+	p.wsMu.Lock()
+	defer p.wsMu.Unlock()
+	return p.WSConnection.WriteJSON(v)
+}
+
+// SendMessage safely writes a raw WebSocket message to the peer's connection.
+func (p *VoicePeer) SendMessage(messageType int, data []byte) error {
+	p.wsMu.Lock()
+	defer p.wsMu.Unlock()
+	return p.WSConnection.WriteMessage(messageType, data)
 }
 
 
