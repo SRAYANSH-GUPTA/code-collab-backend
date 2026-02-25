@@ -572,7 +572,7 @@
         // Connect WebSocket
         document.getElementById('connect').onclick = () => {
             const token = 'test-user-' + Math.floor(Math.random() * 1000);
-            const url = `wss://codeolab.srayansh.me/ws?token=${token}`;
+            const url = `ws://localhost:8081/ws?token=${token}`;
 
             log(`🔗 Connecting to ${url}`, 'info');
             setStatus('🔄 Connecting to server...', 'info');
