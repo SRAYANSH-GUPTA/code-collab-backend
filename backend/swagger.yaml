@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: CodeCollab API
   description: |
-    Real-time code linting platform with WebSocket-based communication.
+    Real-time code collaboration platform with WebSocket-based communication and **SFU (Selective Forwarding Unit)** voice calling.
 
     ## Features
     - Real-time code analysis via WebSocket
@@ -10,22 +10,68 @@ info:
     - Token-based authentication via Supabase
     - Rate limiting (60 requests/minute per user)
     - AWS Lambda-powered linting engines
+    - **Discord-like voice calling** with SFU architecture (Pion WebRTC v4)
+    - Prometheus monitoring & metrics
 
     ## Authentication
     Authentication is required for WebSocket connections. Pass the token as a query parameter:
     `ws://codecollab.srayansh.me/ws?token=YOUR_TOKEN`
 
-    ## WebSocket Protocol
-    After establishing a WebSocket connection, send JSON messages with the following structure:
-    ```json
-    {
-      "action": "analyze",
-      "language": "typescript",
-      "code": "const x: number = 'hello';"
-    }
+    ## Voice Call Architecture (SFU)
+    The voice system uses **SFU (Selective Forwarding Unit)** architecture — the same as Discord, Zoom, and Google Meet.
+
+    | Architecture | Description | Scalability |
+    |:------------|:------------|:------------|
+    | **Mesh (P2P)** | Each peer connects to every other peer | Max ~4 users |
+    | **SFU** ✅ | Server forwards media streams selectively | 5–50+ users per room |
+    | **MCU** | Server mixes all streams into one | Enterprise, high CPU cost |
+
+    ### Why SFU?
+    - **O(n) bandwidth** — each client uploads once, server forwards to others
+    - **Low server CPU** — no transcoding, just packet forwarding
+    - **Scalable** — supports up to 50 users per room (configurable)
+    - **Client-side quality control** — each client decodes independently
+
+    ### System Diagram
+    ```
+    ┌─────────────┐                    ┌──────────────────┐                    ┌─────────────┐
+    │  Client A   │◄──────────────────►│  Signaling       │◄──────────────────►│  Client B   │
+    │  (Browser)  │   WebSocket        │  Server (Go)     │   WebSocket        │  (Browser)  │
+    └──────┬──────┘                    └────────┬─────────┘                    └──────┬──────┘
+           │                                    │                                     │
+           │         WebRTC Media (RTP)         │         WebRTC Media (RTP)          │
+           └────────────────────────────────────┴─────────────────────────────────────┘
+                                     SFU Server
+                              (Forwards RTP Packets)
     ```
 
-    The server will respond with analysis results or error messages.
+    ### Voice Call Connection Flow
+    ```
+    1. Client sends WebSocket message: {"action": "join", "roomId": "..."}
+    2. Server creates PeerConnection, adds user to room
+    3. Server responds: {"type": "joined", "users": [...]}
+    4. Client creates WebRTC offer → sends: {"action": "offer", "sdp": {...}}
+    5. Server processes offer, creates answer
+    6. Server responds: {"type": "answer", "sdp": {...}}
+    7. Both sides exchange ICE candidates (Trickle ICE)
+    8. WebRTC connection established — audio flows through SFU
+    9. SFU forwards audio to all other room participants
+    ```
+
+    ## WebSocket Protocol
+    After establishing a WebSocket connection, send JSON messages. The `action` field determines the message type:
+
+    **Code Analysis:**
+    ```json
+    {"action": "analyze", "language": "typescript", "code": "const x: number = 'hello';"}
+    ```
+
+    **Voice Operations:**
+    ```json
+    {"action": "join", "roomId": "voice-room-1"}
+    ```
+
+    The server responds with the appropriate response type.
   version: 1.0.0
   contact:
     name: Srayansh
@@ -34,7 +80,7 @@ info:
     name: MIT
 
 servers:
-  - url: https://codeolab.srayansh.me
+  - url: https://codecollab.srayansh.me
     description: Production server
   - url: http://localhost:8080
     description: Local development server
@@ -44,8 +90,28 @@ tags:
     description: Health check and status endpoints
   - name: WebSocket
     description: Real-time code analysis via WebSocket
+  - name: Voice - Room Management
+    description: |
+      Voice room lifecycle operations over WebSocket.
+      Rooms are created on-demand when the first user joins and automatically deleted when the last user leaves.
+      A periodic cleanup job runs every 5 minutes to remove any stale empty rooms.
+  - name: Voice - WebRTC Signaling
+    description: |
+      WebRTC signaling operations for establishing peer connections.
+      Uses Pion WebRTC v4 with Unified Plan SDP semantics.
+      Supports Trickle ICE for fast connection establishment.
+  - name: Voice - Media Control
+    description: |
+      Mute/unmute operations and media state management.
+      State changes are broadcast to all participants in the room.
+  - name: Voice - Monitoring
+    description: |
+      Voice system health and metrics endpoints.
+      Prometheus metrics for active rooms, peers, packet loss, jitter, and RTT.
   - name: Info
     description: API information
+  - name: Documentation
+    description: Swagger/OpenAPI documentation endpoints
 
 paths:
   /:
@@ -78,13 +144,26 @@ paths:
                       /health:
                         type: string
                         example: Health check
+                      /docs:
+                        type: string
+                        example: API Documentation
+                      /metrics:
+                        type: string
+                        example: Prometheus metrics
 
   /health:
     get:
       tags:
         - Health
+        - Voice - Monitoring
       summary: Health check
-      description: Returns server health status and active connection count
+      description: |
+        Returns server health status, active connection count, and voice system statistics.
+
+        The `voice` object in the response provides real-time SFU status:
+        - `initialized` — whether the voice service has been started
+        - `roomCount` — number of active voice rooms
+        - `totalPeers` — total number of connected voice peers across all rooms
       operationId: healthCheck
       responses:
         '200':
@@ -92,25 +171,15 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required:
-                  - status
-                  - timestamp
-                  - active_connections
-                properties:
-                  status:
-                    type: string
-                    enum: [healthy]
-                    example: healthy
-                  timestamp:
-                    type: string
-                    format: date-time
-                    example: '2025-11-11T10:30:00Z'
-                  active_connections:
-                    type: integer
-                    minimum: 0
-                    example: 5
-                    description: Number of active WebSocket connections
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: healthy
+                timestamp: '2025-01-15T10:30:00Z'
+                active_connections: 5
+                voice:
+                  initialized: true
+                  roomCount: 2
+                  totalPeers: 8
 
   /ws:
     get:
@@ -118,67 +187,52 @@ paths:
         - WebSocket
       summary: WebSocket connection endpoint
       description: |
-        Establishes a WebSocket connection for real-time code analysis.
+        Establishes a WebSocket connection for **real-time code analysis** and **voice calling**.
 
         ## Connection Flow
-        1. Send HTTP GET with Upgrade header and token query parameter
-        2. Server verifies token
+        1. Send HTTP GET with Upgrade header and `token` query parameter
+        2. Server verifies token against Supabase Auth (or mock auth in dev mode)
         3. Server upgrades connection to WebSocket
         4. Connection is established and ready for messages
 
-        ## Message Format (Client → Server)
-        ```json
-        {
-          "action": "analyze",
-          "language": "typescript",
-          "code": "const x: number = 'hello';"
-        }
-        ```
+        ## Multiplexed Protocol
+        This single WebSocket connection handles both **code analysis** and **voice call** messages.
+        The `action` field in the JSON message determines the routing:
 
-        ## Response Format (Server → Client)
-
-        ### Success Response
-        ```json
-        {
-          "type": "analysis_result",
-          "errors": [
-            {
-              "line": 1,
-              "column": 20,
-              "message": "Type 'string' is not assignable to type 'number'",
-              "severity": "error",
-              "length": 7
-            }
-          ],
-          "executionTime": 234
-        }
-        ```
-
-        ### Error Response
-        ```json
-        {
-          "type": "error",
-          "message": "Invalid request format"
-        }
-        ```
+        | Action | Route | Description |
+        |:-------|:------|:------------|
+        | `analyze` | Code Analysis | Send code for linting |
+        | `join` | Voice | Join a voice room |
+        | `leave` | Voice | Leave a voice room |
+        | `offer` | Voice | Send WebRTC SDP offer |
+        | `answer` | Voice | Send WebRTC SDP answer |
+        | `ice_candidate` | Voice | Send ICE candidate |
+        | `mute` | Voice | Mute microphone |
+        | `unmute` | Voice | Unmute microphone |
 
         ## Rate Limiting
-        - 60 requests per minute per user
+        - 60 requests per minute per user (code analysis only)
         - Sliding window algorithm
         - Returns error message when limit exceeded
 
-        ## Supported Languages
-        - `typescript` / `javascript`
-        - `python`
-        - `dart`
-        - `go` / `golang`
-        - `cpp` / `c++`
+        ## Disconnection Handling
+        When a WebSocket connection closes:
+        1. User is removed from all voice rooms
+        2. Peer connections are cleaned up
+        3. Room state is broadcast to remaining participants
+        4. Empty rooms are deleted automatically
       operationId: websocketConnect
       parameters:
         - name: token
           in: query
           required: true
-          description: Authentication token (Supabase JWT)
+          description: |
+            Authentication token (Supabase JWT).
+
+            In development mode with `USE_MOCK_AUTH=true`, any non-empty token is accepted and
+            the user ID is derived from the token string.
+
+            In production, the token is validated against Supabase Auth API.
           schema:
             type: string
             example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
@@ -191,11 +245,12 @@ paths:
             text/plain:
               schema:
                 type: string
-                example: Missing auth token
               examples:
                 missing_token:
+                  summary: Missing token
                   value: Missing auth token
                 invalid_token:
+                  summary: Invalid token
                   value: Invalid auth token
         '500':
           description: Internal server error - Failed to upgrade connection
@@ -205,14 +260,88 @@ paths:
                 type: string
                 example: Failed to upgrade connection
 
+  /swagger.yaml:
+    get:
+      tags:
+        - Documentation
+      summary: Swagger YAML spec
+      description: Returns the raw OpenAPI 3.0 specification in YAML format
+      operationId: getSwaggerYAML
+      responses:
+        '200':
+          description: Swagger YAML specification
+          content:
+            application/x-yaml:
+              schema:
+                type: string
+        '404':
+          description: Swagger file not found
+
+  /docs:
+    get:
+      tags:
+        - Documentation
+      summary: Swagger UI
+      description: Serves an interactive Swagger UI page for exploring and testing the API
+      operationId: getSwaggerUI
+      responses:
+        '200':
+          description: Swagger UI HTML page
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /metrics:
+    get:
+      tags:
+        - Voice - Monitoring
+      summary: Prometheus metrics
+      description: |
+        Exposes Prometheus-compatible metrics for monitoring.
+
+        ### Voice-specific Metrics
+        | Metric | Type | Description |
+        |:-------|:-----|:------------|
+        | `voice_rooms_active` | Gauge | Number of active voice rooms |
+        | `voice_peers_total` | Gauge | Total peers in voice calls |
+        | `voice_peers_per_room` | Histogram | Distribution of peers per room (buckets: 1,2,5,10,20,50,100) |
+        | `voice_connection_duration_seconds` | Histogram | Time to establish WebRTC connection |
+        | `voice_operations_total` | Counter | Operations by type (join/leave/mute) and status (success/error) |
+        | `voice_ice_state_changes_total` | Counter | ICE state transitions by state |
+        | `voice_errors_total` | Counter | Errors by type |
+        | `voice_packet_loss_percent` | Histogram | Packet loss % per room |
+        | `voice_jitter_milliseconds` | Histogram | Jitter per room (ms) |
+        | `voice_rtt_milliseconds` | Histogram | Round-trip time per room (ms) |
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Prometheus metrics in text exposition format
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: |
+                  # HELP voice_rooms_active Number of active voice rooms
+                  # TYPE voice_rooms_active gauge
+                  voice_rooms_active 2
+                  # HELP voice_peers_total Total number of peers in voice calls
+                  # TYPE voice_peers_total gauge
+                  voice_peers_total 8
+
 components:
   schemas:
+    # ==========================================
+    # Code Analysis Schemas
+    # ==========================================
+
     AnalyzeRequest:
       type: object
       required:
         - action
         - language
         - code
+      description: Request sent over WebSocket to analyze code for linting errors
       properties:
         action:
           type: string
@@ -237,6 +366,7 @@ components:
       type: object
       required:
         - type
+      description: Successful analysis result returned over WebSocket
       properties:
         type:
           type: string
@@ -251,28 +381,6 @@ components:
           description: Processing time in milliseconds
           example: 234
 
-    ErrorResponse:
-      type: object
-      required:
-        - type
-        - message
-      properties:
-        type:
-          type: string
-          enum: [error]
-          example: error
-        message:
-          type: string
-          description: Error message describing what went wrong
-          example: Invalid request format
-          enum:
-            - Invalid request format
-            - Unknown action
-            - Missing language field
-            - Missing code field
-            - Rate limit exceeded. Please wait before sending more requests.
-            - Failed to analyze code
-
     LintError:
       type: object
       required:
@@ -280,6 +388,7 @@ components:
         - column
         - message
         - severity
+      description: A single linting error found in the analyzed code
       properties:
         line:
           type: integer
@@ -306,12 +415,396 @@ components:
           description: Length of the problematic code segment
           example: 7
 
+    ErrorResponse:
+      type: object
+      required:
+        - type
+        - message
+      description: Error response sent over WebSocket when a request fails
+      properties:
+        type:
+          type: string
+          enum: [error]
+          example: error
+        message:
+          type: string
+          description: Error message describing what went wrong
+          example: Invalid request format
+          enum:
+            - Invalid request format
+            - Unknown action
+            - Missing language field
+            - Missing code field
+            - Rate limit exceeded. Please wait before sending more requests.
+            - Failed to analyze code
+
+    # ==========================================
+    # Voice / SFU Schemas
+    # ==========================================
+
+    VoiceMessage:
+      type: object
+      required:
+        - action
+        - roomId
+      description: |
+        WebSocket message for voice call operations. Sent by the client over the same
+        WebSocket connection used for code analysis. The `action` field determines the operation.
+
+        **Note:** `userId` and `timestamp` are set by the server — clients do NOT need to send them.
+      properties:
+        action:
+          type: string
+          enum: [join, leave, offer, answer, ice_candidate, mute, unmute]
+          description: |
+            The voice operation to perform:
+            - `join` — Join or create a voice room
+            - `leave` — Leave the current voice room
+            - `offer` — Send a WebRTC SDP offer to the server
+            - `answer` — Send a WebRTC SDP answer (response to server-initiated renegotiation)
+            - `ice_candidate` — Send an ICE candidate for NAT traversal
+            - `mute` — Mute your microphone
+            - `unmute` — Unmute your microphone
+          example: join
+        roomId:
+          type: string
+          description: |
+            Voice room identifier. Rooms are created on-demand when the first user joins.
+            Use any string as a room ID — typically matching a project or channel ID.
+          example: voice-room-1
+        userId:
+          type: string
+          description: User identifier (set automatically by server from the authenticated token)
+          example: user-123
+          readOnly: true
+        targetId:
+          type: string
+          description: Target user for directed signaling (optional, not currently used in SFU mode)
+          example: user-456
+        sdp:
+          $ref: '#/components/schemas/SessionDescription'
+        candidate:
+          $ref: '#/components/schemas/ICECandidateInit'
+        isMuted:
+          type: boolean
+          description: Current mute status (informational)
+          example: false
+        timestamp:
+          type: string
+          format: date-time
+          description: Message timestamp (set by server)
+          example: '2025-01-15T10:30:00Z'
+          readOnly: true
+
+    VoiceResponse:
+      type: object
+      required:
+        - type
+      description: |
+        Response sent by the server for voice-related events. All participants in a room
+        receive broadcast messages for state changes (user_joined, user_left, user_muted).
+      properties:
+        type:
+          type: string
+          enum: [joined, left, answer, offer, ice_candidate, muted, unmuted, user_joined, user_left, user_muted, error]
+          description: |
+            Response event type:
+
+            **Direct responses (sent to the requesting user):**
+            - `joined` — Confirmation that you joined a room, includes list of current users
+            - `left` — Confirmation that you left the room
+            - `answer` — WebRTC SDP answer in response to your offer
+            - `offer` — Server-initiated renegotiation offer (when a new track needs to be added)
+            - `ice_candidate` — ICE candidate generated by the server's PeerConnection
+            - `muted` — Confirmation that you muted
+            - `unmuted` — Confirmation that you unmuted
+            - `error` — Error message
+
+            **Broadcast responses (sent to ALL users in the room):**
+            - `user_joined` — A new user joined the room (includes updated user list)
+            - `user_left` — A user left the room (includes updated user list)
+            - `user_muted` — A user changed their mute state (includes updated user list)
+          example: joined
+        roomId:
+          type: string
+          description: Voice room identifier
+          example: voice-room-1
+        userId:
+          type: string
+          description: User who triggered the event
+          example: user-123
+        users:
+          type: array
+          description: |
+            Current list of all users in the room. Included in `joined`, `user_joined`,
+            `user_left`, and `user_muted` responses.
+          items:
+            $ref: '#/components/schemas/VoiceUser'
+        sdp:
+          $ref: '#/components/schemas/SessionDescription'
+        candidate:
+          $ref: '#/components/schemas/ICECandidateInit'
+        message:
+          type: string
+          description: Success message (optional)
+          example: Successfully joined room
+        error:
+          type: string
+          description: Error message (only present in `error` type responses)
+          example: Room not found
+
+    VoiceUser:
+      type: object
+      description: |
+        Information about a user currently in a voice room.
+        Connection quality is automatically computed from packet loss metrics.
+      properties:
+        userId:
+          type: string
+          description: Unique user identifier
+          example: user-123
+        isMuted:
+          type: boolean
+          description: Whether the user's microphone is muted
+          example: false
+        isSpeaking:
+          type: boolean
+          description: |
+            Whether the user is currently speaking (voice activity detection).
+            Based on incoming audio track activity.
+          example: true
+        joinedAt:
+          type: string
+          format: date-time
+          description: Timestamp when the user joined the voice room
+          example: '2025-01-15T10:30:00Z'
+        quality:
+          type: string
+          enum: [good, fair, poor]
+          description: |
+            Connection quality indicator based on packet loss:
+            - `good` — 0-50 packets lost
+            - `fair` — 51-100 packets lost
+            - `poor` — 100+ packets lost
+          example: good
+
+    SessionDescription:
+      type: object
+      description: |
+        WebRTC Session Description Protocol (SDP) object.
+        Used for offer/answer exchange during WebRTC connection setup.
+
+        The SDP contains information about codecs, media types, and connection parameters.
+        Pion WebRTC v4 uses **Unified Plan** SDP semantics.
+      properties:
+        type:
+          type: string
+          enum: [offer, answer, pranswer, rollback]
+          description: |
+            SDP type:
+            - `offer` — Initial connection proposal from the client
+            - `answer` — Server's response to an offer
+            - `pranswer` — Provisional answer (rarely used)
+            - `rollback` — Rollback to previous SDP state
+          example: offer
+        sdp:
+          type: string
+          description: |
+            The SDP string containing media negotiation details.
+            Includes codec preferences (Opus for audio), transport parameters,
+            ICE credentials, DTLS fingerprint, and media descriptions.
+          example: |
+            v=0
+            o=- 123456789 2 IN IP4 0.0.0.0
+            s=-
+            t=0 0
+            a=group:BUNDLE 0
+            a=msid-semantic: WMS stream-user-123
+            m=audio 9 UDP/TLS/RTP/SAVPF 111
+            c=IN IP4 0.0.0.0
+            a=rtcp:9 IN IP4 0.0.0.0
+            a=ice-ufrag:xxxx
+            a=ice-pwd:xxxxxxxxxxxx
+            a=fingerprint:sha-256 XX:XX:XX:...
+            a=setup:actpass
+            a=mid:0
+            a=sendrecv
+            a=rtpmap:111 opus/48000/2
+
+    ICECandidateInit:
+      type: object
+      description: |
+        ICE (Interactive Connectivity Establishment) candidate for NAT traversal.
+        Exchanged via Trickle ICE — candidates are sent as they are discovered,
+        rather than waiting for all candidates to be gathered.
+
+        **ICE Candidate Types:**
+        - `host` — Direct IP address (local network)
+        - `srflx` — Server reflexive (public IP via STUN)
+        - `relay` — Relayed through TURN server (fallback for restrictive NATs)
+      properties:
+        candidate:
+          type: string
+          description: |
+            The ICE candidate string in SDP format.
+            Contains protocol (UDP/TCP), IP address, port, candidate type, priority, etc.
+          example: "candidate:1 1 UDP 2130706431 192.168.1.100 54321 typ host"
+        sdpMid:
+          type: string
+          description: |
+            Media stream identification tag.
+            Corresponds to the `a=mid:` attribute in the SDP.
+            Typically "0" for the first (audio) media description.
+          example: "0"
+          nullable: true
+        sdpMLineIndex:
+          type: integer
+          format: uint16
+          description: |
+            Zero-based index of the media description (m= line) in the SDP
+            that this candidate is associated with.
+          example: 0
+          nullable: true
+        usernameFragment:
+          type: string
+          description: ICE username fragment for this candidate
+          nullable: true
+
+    # ==========================================
+    # Voice Room Internal Models (for reference)
+    # ==========================================
+
+    VoiceRoom:
+      type: object
+      description: |
+        Internal voice room model. Rooms are managed in-memory by the RoomManager.
+        Created on-demand when the first user joins, deleted when the last user leaves.
+
+        **Thread Safety:** All room operations are protected by `sync.RWMutex`.
+        **Max Participants:** 50 per room (configurable in code).
+        **Cleanup:** Empty rooms are cleaned up every 5 minutes.
+      properties:
+        id:
+          type: string
+          description: Unique room identifier (same as the `roomId` in messages)
+          example: voice-room-1
+        name:
+          type: string
+          description: Human-readable room name
+          example: voice-room-1
+        peers:
+          type: object
+          description: Map of userID → VoicePeer (active participants)
+          additionalProperties:
+            $ref: '#/components/schemas/VoicePeerInfo'
+        createdAt:
+          type: string
+          format: date-time
+          description: When the room was created
+          example: '2025-01-15T10:00:00Z'
+        maxParticipants:
+          type: integer
+          description: Maximum number of concurrent participants allowed
+          example: 50
+          default: 50
+
+    VoicePeerInfo:
+      type: object
+      description: |
+        Information about a connected voice peer. Each peer has:
+        - A WebRTC PeerConnection for media
+        - A WebSocket connection for signaling
+        - Local and remote audio tracks for SFU forwarding
+        - Connection quality metrics
+      properties:
+        userId:
+          type: string
+          description: Unique user identifier
+          example: user-123
+        isMuted:
+          type: boolean
+          description: Whether the peer's microphone is muted
+          example: false
+        isSpeaking:
+          type: boolean
+          description: Voice activity detection status
+          example: false
+        joinedAt:
+          type: string
+          format: date-time
+          description: When the peer joined the room
+          example: '2025-01-15T10:30:00Z'
+        lastActivity:
+          type: string
+          format: date-time
+          description: Last known activity timestamp
+          example: '2025-01-15T10:35:00Z'
+        localTrackCount:
+          type: integer
+          description: Number of local audio tracks being forwarded to other peers
+          example: 1
+        remoteTrackCount:
+          type: integer
+          description: Number of remote tracks being received from other peers
+          example: 3
+        packetsLost:
+          type: integer
+          description: Total packets lost on this connection
+          example: 12
+        jitter:
+          type: number
+          format: double
+          description: Jitter in milliseconds
+          example: 5.2
+        rtt:
+          type: string
+          description: Round-trip time as a duration
+          example: 45ms
+        needsRenegotiation:
+          type: boolean
+          description: |
+            Flag indicating a deferred renegotiation is pending.
+            Set when a new track needs to be added but the signaling state is not stable.
+            Renegotiation is triggered once the connection becomes stable.
+          example: false
+
+    # ==========================================
+    # Voice Error Codes
+    # ==========================================
+
+    VoiceError:
+      type: object
+      description: |
+        Structured voice error. Sent as part of a VoiceResponse with `type: "error"`.
+      properties:
+        code:
+          type: string
+          enum: [ROOM_FULL, ROOM_NOT_FOUND, PEER_NOT_FOUND, INVALID_SDP, CONNECTION_FAILED]
+          description: |
+            Error code:
+            - `ROOM_FULL` — Voice room has reached maximum capacity (50 users)
+            - `ROOM_NOT_FOUND` — The specified voice room does not exist
+            - `PEER_NOT_FOUND` — The user's peer connection was not found in the room
+            - `INVALID_SDP` — The SDP offer/answer format is invalid
+            - `CONNECTION_FAILED` — Failed to establish WebRTC connection
+          example: ROOM_FULL
+        message:
+          type: string
+          description: Human-readable error message
+          example: Voice room has reached maximum capacity
+
+    # ==========================================
+    # Health Response
+    # ==========================================
+
     HealthResponse:
       type: object
       required:
         - status
         - timestamp
         - active_connections
+        - voice
+      description: Health check response with server status and voice system information
       properties:
         status:
           type: string
@@ -320,11 +813,37 @@ components:
         timestamp:
           type: string
           format: date-time
-          example: '2025-11-11T10:30:00Z'
+          example: '2025-01-15T10:30:00Z'
         active_connections:
           type: integer
           minimum: 0
+          description: Number of active WebSocket connections
           example: 5
+        voice:
+          $ref: '#/components/schemas/VoiceStats'
+
+    VoiceStats:
+      type: object
+      description: |
+        Voice system statistics returned in the health check response.
+        Shows whether the SFU service is running and current room/peer counts.
+      properties:
+        initialized:
+          type: boolean
+          description: Whether the voice service has been initialized
+          example: true
+        roomCount:
+          type: integer
+          description: Number of active voice rooms
+          example: 2
+        totalPeers:
+          type: integer
+          description: Total number of connected voice peers across all rooms
+          example: 8
+
+  # ==========================================
+  # Security Schemes
+  # ==========================================
 
   securitySchemes:
     TokenAuth:
@@ -334,8 +853,152 @@ components:
       description: |
         Supabase JWT token for authentication.
 
-        In development mode with `USE_MOCK_AUTH=true`, any token is accepted.
+        In development mode with `USE_MOCK_AUTH=true`, any non-empty token is accepted.
         In production, the token is validated against Supabase Auth API.
 
 security:
   - TokenAuth: []
+
+# ==========================================
+# Extended Documentation: WebSocket Message Examples
+# ==========================================
+# The following section documents all voice WebSocket messages
+# These are exchanged over the /ws endpoint, not as REST calls.
+#
+# ── JOIN ROOM ──
+# Client → Server:
+#   {"action": "join", "roomId": "project-abc-voice"}
+#
+# Server → Client (direct):
+#   {
+#     "type": "joined",
+#     "roomId": "project-abc-voice",
+#     "userId": "user-123",
+#     "users": [
+#       {"userId": "user-100", "isMuted": false, "isSpeaking": false, "joinedAt": "2025-01-15T10:00:00Z", "quality": "good"},
+#       {"userId": "user-123", "isMuted": false, "isSpeaking": false, "joinedAt": "2025-01-15T10:30:00Z", "quality": "good"}
+#     ]
+#   }
+#
+# Server → All Others (broadcast):
+#   {
+#     "type": "user_joined",
+#     "roomId": "project-abc-voice",
+#     "userId": "user-123",
+#     "users": [...]
+#   }
+#
+# ── SEND OFFER ──
+# Client → Server:
+#   {
+#     "action": "offer",
+#     "roomId": "project-abc-voice",
+#     "sdp": {"type": "offer", "sdp": "v=0\r\no=- ..."}
+#   }
+#
+# Server → Client (direct):
+#   {
+#     "type": "answer",
+#     "roomId": "project-abc-voice",
+#     "userId": "user-123",
+#     "sdp": {"type": "answer", "sdp": "v=0\r\no=- ..."}
+#   }
+#
+# ── SEND ANSWER (for server-initiated renegotiation) ──
+# Client → Server:
+#   {
+#     "action": "answer",
+#     "roomId": "project-abc-voice",
+#     "sdp": {"type": "answer", "sdp": "v=0\r\no=- ..."}
+#   }
+#
+# ── ICE CANDIDATE ──
+# Client → Server:
+#   {
+#     "action": "ice_candidate",
+#     "roomId": "project-abc-voice",
+#     "candidate": {
+#       "candidate": "candidate:1 1 UDP 2130706431 192.168.1.100 54321 typ host",
+#       "sdpMid": "0",
+#       "sdpMLineIndex": 0
+#     }
+#   }
+#
+# Server → Client (when server discovers a candidate):
+#   {
+#     "type": "ice_candidate",
+#     "roomId": "project-abc-voice",
+#     "userId": "user-123",
+#     "candidate": {
+#       "candidate": "candidate:2 1 UDP 1694498815 203.0.113.5 12345 typ srflx",
+#       "sdpMid": "0",
+#       "sdpMLineIndex": 0
+#     }
+#   }
+#
+# ── MUTE ──
+# Client → Server:
+#   {"action": "mute", "roomId": "project-abc-voice"}
+#
+# Server → Client (direct):
+#   {"type": "muted", "roomId": "project-abc-voice", "userId": "user-123"}
+#
+# Server → All (broadcast):
+#   {"type": "user_muted", "roomId": "project-abc-voice", "userId": "user-123", "users": [...]}
+#
+# ── UNMUTE ──
+# Client → Server:
+#   {"action": "unmute", "roomId": "project-abc-voice"}
+#
+# Server → Client (direct):
+#   {"type": "unmuted", "roomId": "project-abc-voice", "userId": "user-123"}
+#
+# Server → All (broadcast):
+#   {"type": "user_muted", "roomId": "project-abc-voice", "userId": "user-123", "users": [...]}
+#
+# ── LEAVE ROOM ──
+# Client → Server:
+#   {"action": "leave", "roomId": "project-abc-voice"}
+#
+# Server → Client (direct):
+#   {"type": "left", "roomId": "project-abc-voice", "userId": "user-123"}
+#
+# Server → All Others (broadcast):
+#   {"type": "user_left", "roomId": "project-abc-voice", "userId": "user-123", "users": [...]}
+#
+# ── SERVER-INITIATED RENEGOTIATION ──
+# When a new user joins and starts sending audio, the server needs to add their
+# track to all existing peers. This requires renegotiation:
+#
+# Server → Existing Client:
+#   {
+#     "type": "offer",
+#     "roomId": "project-abc-voice",
+#     "userId": "user-100",
+#     "sdp": {"type": "offer", "sdp": "v=0\r\no=- ..."}
+#   }
+#
+# Client should respond with:
+#   {
+#     "action": "answer",
+#     "roomId": "project-abc-voice",
+#     "sdp": {"type": "answer", "sdp": "v=0\r\no=- ..."}
+#   }
+#
+# ==========================================
+# Configuration Reference
+# ==========================================
+# Environment Variables:
+#   STUN_SERVERS     — Comma-separated STUN server URLs (default: Google's STUN servers)
+#   TURN_SERVERS     — Comma-separated TURN server URLs (optional)
+#   TURN_USERNAME    — TURN server username
+#   TURN_PASSWORD    — TURN server password
+#   PUBLIC_IP        — Public IP for ICE candidates (required for cloud/NAT deployments)
+#   UDP_MIN_PORT     — Minimum UDP port for WebRTC media (for firewall config)
+#   UDP_MAX_PORT     — Maximum UDP port for WebRTC media (for firewall config)
+#   USE_MOCK_AUTH    — Set to "true" for development without Supabase
+#
+# Default STUN Servers (when STUN_SERVERS is not set):
+#   - stun:stun.l.google.com:19302
+#   - stun:stun1.l.google.com:19302
+#   - stun:stun2.l.google.com:19302
