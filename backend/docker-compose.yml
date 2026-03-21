@@ -6,6 +6,7 @@ services:
     container_name: codecollab-backend
     ports:
       - "8081:8080"
+      - "50000-50100:50000-50100/udp"
     env_file:
       - .env
     environment:

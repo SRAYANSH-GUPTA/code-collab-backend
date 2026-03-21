@@ -1,15 +1,15 @@
 package handlers
 
 import (
+	"codecollab/config"
+	"codecollab/middleware"
+	"codecollab/models"
+	"codecollab/utils"
 	"encoding/json"
+	"github.com/gorilla/websocket"
 	"net/http"
 	"sync"
 	"time"
-    "codecollab/middleware"
-	"codecollab/models"
-	"codecollab/utils"
-	"codecollab/config"
-	"github.com/gorilla/websocket"
 )
 
 var (
@@ -88,12 +88,11 @@ func HandleWebSocket(cfg *config.Config) http.HandlerFunc {
 
 func handleConnection(conn *websocket.Conn, userID string, cfg *config.Config) {
 	defer func() {
-		
+
 		connectionsMu.Lock()
 		delete(connections, conn)
 		connectionsMu.Unlock()
 
-		
 		HandleVoiceDisconnect(userID)
 
 		conn.Close()
@@ -111,7 +110,6 @@ func handleConnection(conn *websocket.Conn, userID string, cfg *config.Config) {
 			break
 		}
 
-		
 		var actionMsg struct {
 			Action string `json:"action"`
 		}
@@ -121,17 +119,14 @@ func handleConnection(conn *websocket.Conn, userID string, cfg *config.Config) {
 			continue
 		}
 
-		
-		
 		if actionMsg.Action == "join" || actionMsg.Action == "leave" ||
-		   actionMsg.Action == "offer" || actionMsg.Action == "answer" ||
-		   actionMsg.Action == "ice_candidate" ||
-		   actionMsg.Action == "mute" || actionMsg.Action == "unmute" {
-			HandleVoiceMessage(conn, userID, messageBytes)
+			actionMsg.Action == "offer" || actionMsg.Action == "answer" ||
+			actionMsg.Action == "ice_candidate" ||
+			actionMsg.Action == "mute" || actionMsg.Action == "unmute" {
+			HandleVoiceMessage(conn, userID, messageBytes, cfg)
 			continue
 		}
 
-		
 		var request models.AnalyzeRequest
 		if err := json.Unmarshal(messageBytes, &request); err != nil {
 			wsLogger.Error("Failed to parse analyze request from user %s: %v", userID, err)
@@ -224,7 +219,6 @@ func HandleHealth(w http.ResponseWriter, r *http.Request) {
 	connectionsMu.RLock()
 	activeConnections := len(connections)
 	connectionsMu.RUnlock()
-
 
 	response := map[string]interface{}{
 		"status":             "healthy",

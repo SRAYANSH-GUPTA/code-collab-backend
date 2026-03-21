@@ -1,67 +1,63 @@
 package handlers
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
+	"strings"
 	"time"
 
 	"codecollab/config"
 	"codecollab/utils"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 var logger = utils.NewLogger("auth")
 
-type SupabaseUser struct {
-	ID    string `json:"id"`
+type SupabaseClaims struct {
 	Email string `json:"email"`
+	jwt.RegisteredClaims
 }
 
 func VerifyToken(token string, cfg *config.Config) (string, error) {
-
 	if cfg.UseMockAuth {
 		logger.Info("Using mock auth - accepting token: %s", token[:min(10, len(token))])
-
-		
 		return "mock-user-" + token, nil
 	}
 
-	if cfg.SupabaseURL == "" || cfg.SupabaseAnonKey == "" {
-		return "", fmt.Errorf("Supabase configuration missing")
+	if token == "" {
+		return "", fmt.Errorf("missing token")
 	}
 
-	client := &http.Client{
-		Timeout: 5 * time.Second,
+	if cfg.SupabaseJWTSecret == "" {
+		return "", fmt.Errorf("SUPABASE_JWT_SECRET is missing")
 	}
 
-	url := fmt.Sprintf("%s/auth/v1/user", cfg.SupabaseURL)
-	req, err := http.NewRequest("GET", url, nil)
+	claims := &SupabaseClaims{}
+	parsedToken, err := jwt.ParseWithClaims(token, claims, func(parsedToken *jwt.Token) (any, error) {
+		if _, ok := parsedToken.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %s", parsedToken.Method.Alg())
+		}
+		return []byte(cfg.SupabaseJWTSecret), nil
+	}, jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithLeeway(30*time.Second))
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return "", fmt.Errorf("invalid auth token: %w", err)
 	}
 
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
-	req.Header.Set("apikey", cfg.SupabaseAnonKey)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to verify token: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("invalid token: %s", string(body))
+	if !parsedToken.Valid {
+		return "", fmt.Errorf("invalid auth token")
 	}
 
-	var user SupabaseUser
-	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
-		return "", fmt.Errorf("failed to decode user: %w", err)
+	expectedIssuer := strings.TrimRight(cfg.SupabaseURL, "/") + "/auth/v1"
+	if cfg.SupabaseURL != "" && claims.Issuer != expectedIssuer {
+		return "", fmt.Errorf("invalid token issuer")
 	}
 
-	logger.Info("Token verified for user: %s", user.ID)
-	return user.ID, nil
+	if claims.Subject == "" {
+		return "", fmt.Errorf("token subject missing")
+	}
+
+	logger.Info("JWT verified for user: %s", claims.Subject)
+	return claims.Subject, nil
 }
 
 func min(a, b int) int {
