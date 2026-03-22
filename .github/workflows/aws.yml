@@ -39,7 +39,7 @@ jobs:
       - name: Build container image
         run: |
           echo "🔨 Building container image with Docker..."
-          docker build -t codecollab-backend:latest -f backend/Dockerfile backend/
+          docker build -t codecollab-backend:latest -f Dockerfile 
           echo "💾 Saving image to tar file..."
           docker save codecollab-backend:latest | gzip > /tmp/codecollab-backend.tar.gz
           echo "✅ Image saved: $(du -h /tmp/codecollab-backend.tar.gz | cut -f1)"
@@ -109,7 +109,7 @@ jobs:
 
             # Create .env file with secrets (DO NOT ECHO THESE)
             echo "🔐 Configuring environment..."
-            cat > backend/.env << 'EOF'
+            cat > .env << 'EOF'
           ENV=production
           PORT=8081
 
@@ -150,7 +150,7 @@ jobs:
           EOF
 
             # Secure .env file
-            chmod 600 backend/.env
+            chmod 600 .env
 
             # Deploy using podman-compose
             echo "🛑 Stopping old containers..."
