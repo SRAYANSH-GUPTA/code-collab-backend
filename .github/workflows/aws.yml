@@ -90,8 +90,8 @@ jobs:
           ssh -o StrictHostKeyChecking=no $EC2_USERNAME@$EC2_HOST << 'ENDSSH'
             set -e  # Exit on error
 
-            APP_DIR="/home/${{ secrets.EC2_USERNAME }}/codecollab-backend"
-            BACKUP_DIR="/home/${{ secrets.EC2_USERNAME }}/codecollab-backup-$(date +%Y%m%d-%H%M%S)"
+            APP_DIR="$HOME/codecollab-backend"
+            BACKUP_DIR="$HOME/codecollab-backup-$(date +%Y%m%d-%H%M%S)"
 
             echo "📦 Preparing deployment..."
 
@@ -104,6 +104,7 @@ jobs:
             # Extract new code
             mkdir -p "$APP_DIR"
             cd "$APP_DIR"
+            find "$APP_DIR" -mindepth 1 -maxdepth 1 ! -name '.env' -exec rm -rf {} +
             tar -xzf /tmp/deploy.tar.gz
             rm /tmp/deploy.tar.gz
 
