@@ -39,7 +39,7 @@ jobs:
       - name: Build container image
         run: |
           echo "🔨 Building container image with Docker..."
-          docker build -t codecollab-backend:latest -f Dockerfile 
+          docker build -t codecollab-backend:latest -f Dockerfile .
           echo "💾 Saving image to tar file..."
           docker save codecollab-backend:latest | gzip > /tmp/codecollab-backend.tar.gz
           echo "✅ Image saved: $(du -h /tmp/codecollab-backend.tar.gz | cut -f1)"
@@ -102,7 +102,7 @@ jobs:
             fi
 
             # Extract new code
-            mkdir -p "$APP_DIR/backend"
+            mkdir -p "$APP_DIR"
             cd "$APP_DIR"
             tar -xzf /tmp/deploy.tar.gz
             rm /tmp/deploy.tar.gz
@@ -186,7 +186,7 @@ jobs:
                 if [ -d "$BACKUP_DIR" ]; then
                   rm -rf "$APP_DIR"
                   mv "$BACKUP_DIR" "$APP_DIR"
-                  cd "$APP_DIR/backend"
+                  cd "$APP_DIR"
                   podman-compose up -d
                 fi
                 exit 1
