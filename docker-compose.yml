@@ -1,5 +1,6 @@
 services:
   app:
+    image: codecollab-backend:local
     build:
       context: .
       dockerfile: Dockerfile
