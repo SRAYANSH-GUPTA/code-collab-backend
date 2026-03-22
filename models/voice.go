@@ -8,8 +8,6 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-// VoiceMessage represents WebSocket messages for voice operations
-// @Description Voice message structure for WebSocket communication in voice calls
 type VoiceMessage struct {
 	Action    string                     `json:"action" example:"join" enums:"join,leave,offer,ice_candidate,mute,unmute"`                         // Action type: join, leave, offer, ice_candidate, mute, unmute
 	RoomID    string                     `json:"roomId" example:"voice-room-1"`                                                                   // Voice channel/room identifier
@@ -21,8 +19,7 @@ type VoiceMessage struct {
 	Timestamp time.Time                  `json:"timestamp" example:"2025-01-15T10:30:00Z"`                                                        // Message timestamp
 }
 
-// VoiceResponse represents responses sent to clients for voice operations
-// @Description Voice response structure sent by server for voice-related events
+
 type VoiceResponse struct {
 	Type      string                     `json:"type" example:"joined" enums:"joined,left,answer,ice_candidate,muted,unmuted,user_joined,user_left,error"` // Response type
 	RoomID    string                     `json:"roomId" example:"voice-room-1"`                                                                              // Voice room identifier

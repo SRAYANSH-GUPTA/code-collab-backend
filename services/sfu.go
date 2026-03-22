@@ -44,17 +44,14 @@ func NewSFUService(roomManager *RoomManager, stunServers, turnServers []string, 
 		})
 	}
 
-	// Configure the setting engine for NAT traversal (required for AWS/cloud deployments)
 	settingEngine := webrtc.SettingEngine{}
 
-	// If a public IP is configured, tell pion to use it in ICE candidates
-	// instead of the private IP. This is essential when the server is behind a NAT.
+
 	if publicIP != "" {
 		settingEngine.SetNAT1To1IPs([]string{publicIP}, webrtc.ICECandidateTypeHost)
 		sfuLogger.Info("🌐 Configured public IP for ICE candidates: %s", publicIP)
 	}
 
-	// Restrict UDP port range so only specific ports need to be opened in the firewall/security group
 	if udpMinPort > 0 && udpMaxPort > 0 && udpMaxPort >= udpMinPort {
 		if err := settingEngine.SetEphemeralUDPPortRange(udpMinPort, udpMaxPort); err != nil {
 			sfuLogger.Error("❌ Failed to set UDP port range %d-%d: %v", udpMinPort, udpMaxPort, err)

@@ -9,8 +9,10 @@ import (
 )
 
 type Config struct {
-	SupabaseURL     string
-	SupabaseAnonKey string
+	SupabaseURL         string
+	SupabaseAnonKey     string
+	SupabaseDatabaseURL string
+	SupabaseJWTSecret   string
 
 	AWSRegion          string
 	AWSAccessKeyID     string
@@ -30,18 +32,14 @@ type Config struct {
 	UseMockLambda bool
 	UseMockAuth   bool
 
-	// Voice/WebRTC Configuration
-	// Best Practice: Use multiple STUN servers for redundancy
 	STUNServers []string
-	// Best Practice: TURN servers for users behind restrictive NATs/firewalls
+
 	TURNServers  []string
 	TURNUsername string
 	TURNPassword string
 
-	// Public IP of the server (required when behind NAT, e.g. on AWS EC2)
-	// The SFU advertises this IP in ICE candidates so clients can reach it
 	PublicIP string
-	// UDP port range for WebRTC media traffic (open these in your security group)
+
 	UDPMinPort uint16
 	UDPMaxPort uint16
 }
@@ -62,6 +60,8 @@ func Load() *Config {
 	return &Config{
 		SupabaseURL:         getEnv("SUPABASE_URL", ""),
 		SupabaseAnonKey:     getEnv("SUPABASE_ANON_KEY", ""),
+		SupabaseDatabaseURL: getEnv("SUPABASE_DATABASE_URL", ""),
+		SupabaseJWTSecret:   getEnv("SUPABASE_JWT_SECRET", ""),
 		AWSRegion:           getEnv("AWS_REGION", "us-east-1"),
 		AWSAccessKeyID:      getEnv("AWS_ACCESS_KEY_ID", ""),
 		AWSSecretAccessKey:  getEnv("AWS_SECRET_ACCESS_KEY", ""),
@@ -114,8 +114,7 @@ func getBoolEnv(key string, defaultValue bool) bool {
 
 func getSliceEnv(key string, defaultValue []string) []string {
 	if value := os.Getenv(key); value != "" {
-		// Split by comma for multiple values
-		// Example: STUN_SERVERS=stun:server1.com:19302,stun:server2.com:19302
+
 		result := []string{}
 		for _, v := range splitAndTrim(value, ",") {
 			if v != "" {

@@ -1,36 +1,41 @@
 package handlers
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
+	"strings"
+	"sync"
 	"time"
 
+	"codecollab/config"
 	"codecollab/metrics"
 	"codecollab/models"
 	"codecollab/services"
 	"codecollab/utils"
 
 	"github.com/gorilla/websocket"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 var (
 	voiceLogger = utils.NewLogger("voice")
-	
+
 	sfuService *services.SFUService
+
+	voiceDB     *sql.DB
+	voiceDBErr  error
+	voiceDBOnce sync.Once
 )
-
-
-
 
 func InitVoiceService(stunServers, turnServers []string, turnUsername, turnPassword, publicIP string, udpMinPort, udpMaxPort uint16) {
 	roomManager := services.NewRoomManager()
 	sfuService = services.NewSFUService(roomManager, stunServers, turnServers, turnUsername, turnPassword, publicIP, udpMinPort, udpMaxPort)
 	voiceLogger.Info("Voice service initialized with %d STUN servers and %d TURN servers", len(stunServers), len(turnServers))
 
-	
-	
 	go periodicRoomCleanup(roomManager)
 }
-
 
 func periodicRoomCleanup(rm *services.RoomManager) {
 	ticker := time.NewTicker(5 * time.Minute)
@@ -44,19 +49,7 @@ func periodicRoomCleanup(rm *services.RoomManager) {
 	}
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-func HandleVoiceMessage(ws *websocket.Conn, userID string, messageBytes []byte) {
+func HandleVoiceMessage(ws *websocket.Conn, userID string, messageBytes []byte, cfg *config.Config) {
 	var msg models.VoiceMessage
 	if err := json.Unmarshal(messageBytes, &msg); err != nil {
 		voiceLogger.Error("Failed to parse voice message from user %s: %v", userID, err)
@@ -64,16 +57,14 @@ func HandleVoiceMessage(ws *websocket.Conn, userID string, messageBytes []byte) 
 		return
 	}
 
-	
 	msg.UserID = userID
 	msg.Timestamp = time.Now()
 
 	voiceLogger.Info("Voice action '%s' from user %s in room %s", msg.Action, userID, msg.RoomID)
 
-
 	switch msg.Action {
 	case "join":
-		handleVoiceJoin(ws, msg)
+		handleVoiceJoin(ws, msg, cfg)
 	case "leave":
 		handleVoiceLeave(ws, msg)
 	case "offer":
@@ -92,13 +83,26 @@ func HandleVoiceMessage(ws *websocket.Conn, userID string, messageBytes []byte) 
 	}
 }
 
-
-func handleVoiceJoin(ws *websocket.Conn, msg models.VoiceMessage) {
+func handleVoiceJoin(ws *websocket.Conn, msg models.VoiceMessage, cfg *config.Config) {
 	voiceLogger.Info("🚀 handleVoiceJoin - User %s joining room %s", msg.UserID, msg.RoomID)
 
 	if msg.RoomID == "" {
 		voiceLogger.Error("❌ Join failed: Missing roomId for user %s", msg.UserID)
 		sendVoiceError(ws, "Missing roomId")
+		metrics.RecordVoiceOperation("join", "error")
+		return
+	}
+
+	allowed, err := canJoinProjectRoom(msg.UserID, msg.RoomID, cfg)
+	if err != nil {
+		voiceLogger.Error("❌ Failed to authorize room %s for user %s: %v", msg.RoomID, msg.UserID, err)
+		sendVoiceError(ws, "Failed to verify project membership")
+		metrics.RecordVoiceOperation("join", "error")
+		return
+	}
+	if !allowed {
+		voiceLogger.Warn("❌ User %s is not allowed to join room %s", msg.UserID, msg.RoomID)
+		sendVoiceError(ws, "You are not a member of this project")
 		metrics.RecordVoiceOperation("join", "error")
 		return
 	}
@@ -134,11 +138,9 @@ func handleVoiceJoin(ws *websocket.Conn, msg models.VoiceMessage) {
 		voiceLogger.Info("✅ Successfully sent 'joined' response to user %s", msg.UserID)
 	}
 
-
 	metrics.RecordVoiceOperation("join", "success")
 	updateGlobalVoiceMetrics()
 }
-
 
 func handleVoiceLeave(ws *websocket.Conn, msg models.VoiceMessage) {
 	if msg.RoomID == "" {
@@ -167,8 +169,6 @@ func handleVoiceLeave(ws *websocket.Conn, msg models.VoiceMessage) {
 	metrics.RecordVoiceOperation("leave", "success")
 	updateGlobalVoiceMetrics()
 }
-
-
 
 func handleVoiceOffer(ws *websocket.Conn, msg models.VoiceMessage) {
 	voiceLogger.Info("📥 handleVoiceOffer - Received offer from user %s in room %s", msg.UserID, msg.RoomID)
@@ -204,7 +204,6 @@ func handleVoiceOffer(ws *websocket.Conn, msg models.VoiceMessage) {
 	}
 }
 
-
 func handleVoiceAnswer(ws *websocket.Conn, msg models.VoiceMessage) {
 	voiceLogger.Info("🔵 handleVoiceAnswer called for user %s in room %s", msg.UserID, msg.RoomID)
 
@@ -224,8 +223,6 @@ func handleVoiceAnswer(ws *websocket.Conn, msg models.VoiceMessage) {
 
 	voiceLogger.Info("✅ Successfully processed answer from user %s", msg.UserID)
 }
-
-
 
 func handleVoiceICECandidate(ws *websocket.Conn, msg models.VoiceMessage) {
 	voiceLogger.Info("🧊 handleVoiceICECandidate - Received from user %s in room %s", msg.UserID, msg.RoomID)
@@ -262,7 +259,6 @@ func intOrZero(i *uint16) uint16 {
 	return *i
 }
 
-
 func handleVoiceMute(ws *websocket.Conn, msg models.VoiceMessage) {
 	if msg.RoomID == "" {
 		sendVoiceError(ws, "Missing roomId")
@@ -285,7 +281,6 @@ func handleVoiceMute(ws *websocket.Conn, msg models.VoiceMessage) {
 		voiceLogger.Error("Failed to send mute response: %v", err)
 	}
 }
-
 
 func handleVoiceUnmute(ws *websocket.Conn, msg models.VoiceMessage) {
 	if msg.RoomID == "" {
@@ -310,17 +305,11 @@ func handleVoiceUnmute(ws *websocket.Conn, msg models.VoiceMessage) {
 	}
 }
 
-
-
 func HandleVoiceDisconnect(userID string) {
-	
-	
+
 	voiceLogger.Info("Cleaning up voice connections for user %s", userID)
 
-	
-	
 }
-
 
 func sendVoiceError(ws *websocket.Conn, message string) {
 	response := models.VoiceResponse{
@@ -329,8 +318,6 @@ func sendVoiceError(ws *websocket.Conn, message string) {
 	}
 	ws.WriteJSON(response)
 }
-
-
 
 func GetVoiceStats() map[string]interface{} {
 	if sfuService == nil {
@@ -346,13 +333,9 @@ func GetVoiceStats() map[string]interface{} {
 	}
 }
 
-
-
 func GetSFUService() *services.SFUService {
 	return sfuService
 }
-
-
 
 func updateGlobalVoiceMetrics() {
 	if sfuService == nil {
@@ -365,8 +348,96 @@ func updateGlobalVoiceMetrics() {
 
 	metrics.UpdateVoiceStats(roomCount, peerCount)
 
-	
 	for _, room := range rm.GetAllRooms() {
 		metrics.VoicePeersPerRoom.Observe(float64(room.GetPeerCount()))
 	}
+}
+
+func canJoinProjectRoom(userID, roomID string, cfg *config.Config) (bool, error) {
+	projectID, err := projectIDFromRoomID(roomID)
+	if err != nil {
+		return false, err
+	}
+
+	db, err := getVoiceDB(cfg)
+	if err != nil {
+		return false, err
+	}
+
+	const query = `
+		select exists (
+			select 1
+			from public.projects p
+			where p.id = $1::uuid
+			  and (
+				p.owner_id = $2::uuid
+				or exists (
+					select 1
+					from public.project_members pm
+					where pm.project_id = p.id
+					  and pm.user_id = $2::uuid
+				)
+			  )
+		)
+	`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var allowed bool
+	if err := db.QueryRowContext(ctx, query, projectID, userID).Scan(&allowed); err != nil {
+		return false, err
+	}
+
+	return allowed, nil
+}
+
+func projectIDFromRoomID(roomID string) (string, error) {
+	const prefix = "voice-room-"
+	if !strings.HasPrefix(roomID, prefix) {
+		return "", fmt.Errorf("invalid roomId format")
+	}
+
+	projectID := strings.TrimPrefix(roomID, prefix)
+	if projectID == "" {
+		return "", fmt.Errorf("missing project ID in roomId")
+	}
+
+	return projectID, nil
+}
+
+func getVoiceDB(cfg *config.Config) (*sql.DB, error) {
+	voiceDBOnce.Do(func() {
+		if cfg == nil || cfg.SupabaseDatabaseURL == "" {
+			voiceDBErr = fmt.Errorf("SUPABASE_DATABASE_URL is missing")
+			return
+		}
+
+		db, err := sql.Open("pgx", cfg.SupabaseDatabaseURL)
+		if err != nil {
+			voiceDBErr = fmt.Errorf("failed to open voice database: %w", err)
+			return
+		}
+
+		db.SetMaxOpenConns(5)
+		db.SetMaxIdleConns(5)
+		db.SetConnMaxLifetime(30 * time.Minute)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := db.PingContext(ctx); err != nil {
+			_ = db.Close()
+			voiceDBErr = fmt.Errorf("failed to connect to voice database: %w", err)
+			return
+		}
+
+		voiceDB = db
+	})
+
+	if voiceDBErr != nil {
+		return nil, voiceDBErr
+	}
+
+	return voiceDB, nil
 }
