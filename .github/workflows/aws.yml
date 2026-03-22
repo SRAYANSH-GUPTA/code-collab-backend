@@ -154,7 +154,7 @@ jobs:
 
             # Deploy using podman-compose
             echo "🛑 Stopping old containers..."
-            cd backend
+          
             podman-compose down || true
 
             echo "📦 Loading pre-built container image..."
