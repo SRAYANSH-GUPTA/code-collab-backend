@@ -8,9 +8,9 @@ services:
     env_file:
       - .env
     environment:
-      - PORT=8080
+      - PORT=8081
       - ENV=production
-      - LOKI_URL=http://loki:3100
+      - LOKI_URL=http://127.0.0.1:3100
     network_mode: "host"
     dns:
       - 8.8.8.8
