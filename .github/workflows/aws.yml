@@ -84,6 +84,8 @@ jobs:
           TURN_USERNAME: ${{ secrets.TURN_USERNAME }}
           TURN_PASSWORD: ${{ secrets.TURN_PASSWORD }}
           PUBLIC_IP: ${{ secrets.PUBLIC_IP }}
+          SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
+          SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
         run: |
           ssh -o StrictHostKeyChecking=no $EC2_USERNAME@$EC2_HOST << 'ENDSSH'
             set -e  # Exit on error
@@ -114,6 +116,8 @@ jobs:
           # Supabase Authentication
           SUPABASE_URL=${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_DATABASE_URL=${{ secrets.SUPABASE_DATABASE_URL }}
+          SUPABASE_JWT_SECRET=${{ secrets.SUPABASE_JWT_SECRET }}
 
           # AWS Configuration
           AWS_REGION=${{ secrets.AWS_REGION }}
