@@ -50,7 +50,7 @@ Real-time collaborative coding platform backend with voice calling support.
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
+git clone git@github.com:SRAYANSH-GUPTA/code-collab-backend.git
 cd code-collab-backend
 ```
 
