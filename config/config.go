@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -42,6 +43,10 @@ type Config struct {
 
 	UDPMinPort uint16
 	UDPMaxPort uint16
+
+	// PoolWatch integration
+	PoolWatchURL          string
+	PoolWatchPollInterval time.Duration
 }
 
 func Load() *Config {
@@ -84,6 +89,10 @@ func Load() *Config {
 		PublicIP:     getEnv("PUBLIC_IP", ""),
 		UDPMinPort:   getUint16Env("UDP_MIN_PORT", 50000),
 		UDPMaxPort:   getUint16Env("UDP_MAX_PORT", 50100),
+
+		// PoolWatch
+		PoolWatchURL:          getEnv("POOLWATCH_URL", ""),
+		PoolWatchPollInterval: getDurationEnv("POOLWATCH_POLL_INTERVAL", 15*time.Second),
 	}
 }
 
@@ -107,6 +116,15 @@ func getBoolEnv(key string, defaultValue bool) bool {
 	if value := os.Getenv(key); value != "" {
 		if boolValue, err := strconv.ParseBool(value); err == nil {
 			return boolValue
+		}
+	}
+	return defaultValue
+}
+
+func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
+	if value := os.Getenv(key); value != "" {
+		if d, err := time.ParseDuration(value); err == nil {
+			return d
 		}
 	}
 	return defaultValue

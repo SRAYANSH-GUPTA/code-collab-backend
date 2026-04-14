@@ -14,6 +14,7 @@ import (
 	"codecollab/handlers"
 	"codecollab/metrics"
 	"codecollab/middleware"
+	"codecollab/services"
 	"codecollab/utils"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -49,6 +50,16 @@ func main() {
 	handlers.InitVoiceService(cfg.STUNServers, cfg.TURNServers, cfg.TURNUsername, cfg.TURNPassword, cfg.PublicIP, cfg.UDPMinPort, cfg.UDPMaxPort)
 	logger.Info("Voice service initialized with %d STUN and %d TURN servers (public IP: %s)", len(cfg.STUNServers), len(cfg.TURNServers), cfg.PublicIP)
 
+	// PoolWatch — DB connection-pool monitoring sidecar.
+	poolWatchSvc := services.NewPoolWatchService(cfg.PoolWatchURL, cfg.PoolWatchPollInterval)
+	handlers.InitPoolWatchHandler(poolWatchSvc)
+	ctxPoolWatch, cancelPoolWatch := context.WithCancel(context.Background())
+	defer cancelPoolWatch()
+	poolWatchSvc.Start(ctxPoolWatch)
+	if poolWatchSvc.Enabled() {
+		logger.Info("PoolWatch integration enabled, polling %s every %s", cfg.PoolWatchURL, cfg.PoolWatchPollInterval)
+	}
+
 	metrics.StartSystemMetricsCollector()
 	logger.Info("System metrics collector started")
 
@@ -68,6 +79,13 @@ func main() {
 	apiMux.Handle("/metrics", promhttp.Handler())
 	apiMux.HandleFunc("/swagger.yaml", handlers.ServeSwaggerYAML)
 	apiMux.HandleFunc("/docs", handlers.ServeSwaggerUI)
+
+	// PoolWatch endpoints — pool monitoring dashboard
+	apiMux.HandleFunc("/pool/metrics", handlers.HandlePoolMetrics)
+	apiMux.HandleFunc("/pool/alerts", handlers.HandlePoolAlerts)
+	apiMux.HandleFunc("/pool/status", handlers.HandlePoolStatus)
+	apiMux.HandleFunc("/pool/proxy/enable", handlers.HandlePoolProxyEnable)
+	apiMux.HandleFunc("/pool/proxy/disable", handlers.HandlePoolProxyDisable)
 	apiMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
