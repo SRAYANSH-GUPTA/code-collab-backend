@@ -1,0 +1,12 @@
+{
+  "name": "typescript-linter-lambda",
+  "version": "1.0.0",
+  "description": "AWS Lambda function for TypeScript linting",
+  "main": "index.js",
+  "scripts": {
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "typescript": "^5.3.3"
+  }
+}

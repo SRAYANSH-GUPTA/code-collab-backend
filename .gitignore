@@ -1,4 +1,8 @@
 # Go specific
+__pycache__/
+*.pyc
+/deploy/ministack/install.lock
+/deploy/monitoring/secrets/
 *.exe
 *.exe~
 *.dll
@@ -8,6 +12,10 @@
 *.out
 go.work
 vendor/
+install.sh
+script/
+
+deploy.sh
 
 # Go build artifacts
 /backend/codecollab
@@ -36,6 +44,7 @@ yarn-error.log*
 .npm
 .yarn-integrity
 package-lock.json
+!/lambda/typescript-linter/package-lock.json
 yarn.lock
 
 # Frontend build artifacts

@@ -18,6 +18,8 @@ type Config struct {
 	AWSRegion          string
 	AWSAccessKeyID     string
 	AWSSecretAccessKey string
+	AWSSessionToken    string
+	LambdaEndpointURL  string
 
 	LambdaARNTypeScript string
 	LambdaARNPython     string
@@ -70,6 +72,8 @@ func Load() *Config {
 		AWSRegion:           getEnv("AWS_REGION", "us-east-1"),
 		AWSAccessKeyID:      getEnv("AWS_ACCESS_KEY_ID", ""),
 		AWSSecretAccessKey:  getEnv("AWS_SECRET_ACCESS_KEY", ""),
+		AWSSessionToken:     getEnv("AWS_SESSION_TOKEN", ""),
+		LambdaEndpointURL:   getEnv("LAMBDA_ENDPOINT_URL", ""),
 		LambdaARNTypeScript: getEnv("LAMBDA_ARN_TYPESCRIPT", ""),
 		LambdaARNPython:     getEnv("LAMBDA_ARN_PYTHON", ""),
 		LambdaARNDart:       getEnv("LAMBDA_ARN_DART", ""),

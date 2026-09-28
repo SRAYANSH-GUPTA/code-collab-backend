@@ -9,48 +9,45 @@ import (
 )
 
 type VoiceMessage struct {
-	Action    string                     `json:"action" example:"join" enums:"join,leave,offer,ice_candidate,mute,unmute"`                         // Action type: join, leave, offer, ice_candidate, mute, unmute
-	RoomID    string                     `json:"roomId" example:"voice-room-1"`                                                                   // Voice channel/room identifier
-	UserID    string                     `json:"userId" example:"user-123"`                                                                       // User identifier (set by server)
-	TargetID  string                     `json:"targetId,omitempty" example:"user-456"`                                                           // Target user for P2P signaling
-	SDP       *webrtc.SessionDescription `json:"sdp,omitempty" swaggerignore:"true"`                                                              // WebRTC Session Description (offer/answer)
-	Candidate *webrtc.ICECandidateInit   `json:"candidate,omitempty" swaggerignore:"true"`                                                        // ICE candidate for connection establishment
-	IsMuted   bool                       `json:"isMuted,omitempty" example:"false"`                                                               // Mute status
-	Timestamp time.Time                  `json:"timestamp" example:"2025-01-15T10:30:00Z"`                                                        // Message timestamp
+	Action    string                     `json:"action" example:"join" enums:"join,leave,offer,ice_candidate,mute,unmute"` // Action type: join, leave, offer, ice_candidate, mute, unmute
+	RoomID    string                     `json:"roomId" example:"voice-room-1"`                                            // Voice channel/room identifier
+	UserID    string                     `json:"userId" example:"user-123"`                                                // User identifier (set by server)
+	TargetID  string                     `json:"targetId,omitempty" example:"user-456"`                                    // Target user for P2P signaling
+	SDP       *webrtc.SessionDescription `json:"sdp,omitempty" swaggerignore:"true"`                                       // WebRTC Session Description (offer/answer)
+	Candidate *webrtc.ICECandidateInit   `json:"candidate,omitempty" swaggerignore:"true"`                                 // ICE candidate for connection establishment
+	IsMuted   bool                       `json:"isMuted,omitempty" example:"false"`                                        // Mute status
+	Timestamp time.Time                  `json:"timestamp" example:"2025-01-15T10:30:00Z"`                                 // Message timestamp
 }
-
 
 type VoiceResponse struct {
 	Type      string                     `json:"type" example:"joined" enums:"joined,left,answer,ice_candidate,muted,unmuted,user_joined,user_left,error"` // Response type
-	RoomID    string                     `json:"roomId" example:"voice-room-1"`                                                                              // Voice room identifier
-	UserID    string                     `json:"userId" example:"user-123"`                                                                                  // User identifier
-	Users     []VoiceUser                `json:"users,omitempty"`                                                                                            // List of users in the room
-	SDP       *webrtc.SessionDescription `json:"sdp,omitempty" swaggerignore:"true"`                                                                         // WebRTC Session Description (answer)
-	Candidate *webrtc.ICECandidateInit   `json:"candidate,omitempty" swaggerignore:"true"`                                                                   // ICE candidate from server
-	Message   string                     `json:"message,omitempty" example:"Successfully joined room"`                                                       // Success message
-	Error     string                     `json:"error,omitempty" example:"Room not found"`                                                                   // Error message
+	RoomID    string                     `json:"roomId" example:"voice-room-1"`                                                                            // Voice room identifier
+	UserID    string                     `json:"userId" example:"user-123"`                                                                                // User identifier
+	Users     []VoiceUser                `json:"users,omitempty"`                                                                                          // List of users in the room
+	SDP       *webrtc.SessionDescription `json:"sdp,omitempty" swaggerignore:"true"`                                                                       // WebRTC Session Description (answer)
+	Candidate *webrtc.ICECandidateInit   `json:"candidate,omitempty" swaggerignore:"true"`                                                                 // ICE candidate from server
+	Message   string                     `json:"message,omitempty" example:"Successfully joined room"`                                                     // Success message
+	Error     string                     `json:"error,omitempty" example:"Room not found"`                                                                 // Error message
 }
 
 // VoiceUser represents a user in a voice room
 // @Description User information in a voice room
 type VoiceUser struct {
-	UserID     string    `json:"userId" example:"user-123"`          // User identifier
-	IsMuted    bool      `json:"isMuted" example:"false"`            // Mute status
-	IsSpeaking bool      `json:"isSpeaking" example:"true"`          // Voice activity detection status
-	JoinedAt   time.Time `json:"joinedAt" example:"2025-01-15T10:30:00Z"` // Time when user joined the room
+	UserID     string    `json:"userId" example:"user-123"`                     // User identifier
+	IsMuted    bool      `json:"isMuted" example:"false"`                       // Mute status
+	IsSpeaking bool      `json:"isSpeaking" example:"true"`                     // Voice activity detection status
+	JoinedAt   time.Time `json:"joinedAt" example:"2025-01-15T10:30:00Z"`       // Time when user joined the room
 	Quality    string    `json:"quality" example:"good" enums:"good,fair,poor"` // Connection quality indicator
 }
 
-
 type VoiceRoom struct {
-	ID             string
-	Name           string
-	Peers          map[string]*VoicePeer 
-	CreatedAt      time.Time
+	ID              string
+	Name            string
+	Peers           map[string]*VoicePeer
+	CreatedAt       time.Time
 	MaxParticipants int
-	mu             sync.RWMutex
+	mu              sync.RWMutex
 }
-
 
 type VoicePeer struct {
 	UserID         string
@@ -61,20 +58,24 @@ type VoicePeer struct {
 	JoinedAt       time.Time
 	LastActivity   time.Time
 
+	LocalTracks  []*webrtc.TrackLocalStaticRTP
+	RemoteTracks []*webrtc.TrackRemote
+	// Track IDs already added to this peer's PeerConnection. This makes track
+	// synchronization safe to repeat when users join at nearly the same time.
+	AddedTrackIDs map[string]*webrtc.RTPSender
 
-	LocalTracks    []*webrtc.TrackLocalStaticRTP
-	RemoteTracks   []*webrtc.TrackRemote
-
-
-	PacketsLost    uint32
-	Jitter         float64
-	RTT            time.Duration
+	PacketsLost uint32
+	Jitter      float64
+	RTT         time.Duration
 
 	// Flag to indicate if renegotiation is needed when connection becomes stable
 	NeedsRenegotiation bool
+	// NegotiationMu serializes server-created offers for this peer. A track can
+	// arrive while another offer is still being answered.
+	NegotiationMu sync.Mutex
 
-	Mu             sync.RWMutex
-	wsMu           sync.Mutex // protects concurrent WebSocket writes
+	Mu   sync.RWMutex
+	wsMu sync.Mutex // protects concurrent WebSocket writes
 }
 
 // SendJSON safely writes a JSON message to the peer's WebSocket connection.
@@ -92,17 +93,15 @@ func (p *VoicePeer) SendMessage(messageType int, data []byte) error {
 	return p.WSConnection.WriteMessage(messageType, data)
 }
 
-
 func NewVoiceRoom(id, name string) *VoiceRoom {
 	return &VoiceRoom{
 		ID:              id,
 		Name:            name,
 		Peers:           make(map[string]*VoicePeer),
 		CreatedAt:       time.Now(),
-		MaxParticipants: 50, 
+		MaxParticipants: 50,
 	}
 }
-
 
 func (r *VoiceRoom) AddPeer(peer *VoicePeer) error {
 	r.mu.Lock()
@@ -116,20 +115,18 @@ func (r *VoiceRoom) AddPeer(peer *VoicePeer) error {
 	return nil
 }
 
-
 func (r *VoiceRoom) RemovePeer(userID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if peer, exists := r.Peers[userID]; exists {
-		
+
 		if peer.PeerConnection != nil {
 			peer.PeerConnection.Close()
 		}
 		delete(r.Peers, userID)
 	}
 }
-
 
 func (r *VoiceRoom) GetPeer(userID string) (*VoicePeer, bool) {
 	r.mu.RLock()
@@ -138,7 +135,6 @@ func (r *VoiceRoom) GetPeer(userID string) (*VoicePeer, bool) {
 	peer, exists := r.Peers[userID]
 	return peer, exists
 }
-
 
 func (r *VoiceRoom) GetAllPeers() []*VoicePeer {
 	r.mu.RLock()
@@ -151,14 +147,12 @@ func (r *VoiceRoom) GetAllPeers() []*VoicePeer {
 	return peers
 }
 
-
 func (r *VoiceRoom) GetPeerCount() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	return len(r.Peers)
 }
-
 
 func (r *VoiceRoom) GetVoiceUsers() []VoiceUser {
 	r.mu.RLock()
@@ -184,15 +178,13 @@ func (r *VoiceRoom) GetVoiceUsers() []VoiceUser {
 	return users
 }
 
-
 var (
-	ErrRoomFull        = &VoiceError{Code: "ROOM_FULL", Message: "Voice room has reached maximum capacity"}
-	ErrRoomNotFound    = &VoiceError{Code: "ROOM_NOT_FOUND", Message: "Voice room not found"}
-	ErrPeerNotFound    = &VoiceError{Code: "PEER_NOT_FOUND", Message: "Peer not found in room"}
-	ErrInvalidSDP      = &VoiceError{Code: "INVALID_SDP", Message: "Invalid SDP format"}
+	ErrRoomFull         = &VoiceError{Code: "ROOM_FULL", Message: "Voice room has reached maximum capacity"}
+	ErrRoomNotFound     = &VoiceError{Code: "ROOM_NOT_FOUND", Message: "Voice room not found"}
+	ErrPeerNotFound     = &VoiceError{Code: "PEER_NOT_FOUND", Message: "Peer not found in room"}
+	ErrInvalidSDP       = &VoiceError{Code: "INVALID_SDP", Message: "Invalid SDP format"}
 	ErrConnectionFailed = &VoiceError{Code: "CONNECTION_FAILED", Message: "Failed to establish WebRTC connection"}
 )
-
 
 type VoiceError struct {
 	Code    string

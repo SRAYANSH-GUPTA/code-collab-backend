@@ -141,7 +141,7 @@ func createLambdaClient(cfg *config.Config) (*lambda.Client, error) {
 		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
 			cfg.AWSAccessKeyID,
 			cfg.AWSSecretAccessKey,
-			"",
+			cfg.AWSSessionToken,
 		)),
 	)
 
@@ -149,7 +149,11 @@ func createLambdaClient(cfg *config.Config) (*lambda.Client, error) {
 		return nil, err
 	}
 
-	return lambda.NewFromConfig(awsCfg), nil
+	return lambda.NewFromConfig(awsCfg, func(options *lambda.Options) {
+		if cfg.LambdaEndpointURL != "" {
+			options.BaseEndpoint = aws.String(cfg.LambdaEndpointURL)
+		}
+	}), nil
 }
 
 func getMockLintErrors(language string) []models.LintError {

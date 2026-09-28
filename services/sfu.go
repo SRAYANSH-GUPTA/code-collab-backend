@@ -15,27 +15,22 @@ import (
 
 var sfuLogger = utils.NewLogger("sfu")
 
-
-
 type SFUService struct {
 	roomManager *RoomManager
 	config      webrtc.Configuration
 	api         *webrtc.API
 }
 
-
 func NewSFUService(roomManager *RoomManager, stunServers, turnServers []string, turnUsername, turnPassword, publicIP string, udpMinPort, udpMaxPort uint16) *SFUService {
-	
+
 	iceServers := []webrtc.ICEServer{}
 
-	
 	for _, stun := range stunServers {
 		iceServers = append(iceServers, webrtc.ICEServer{
 			URLs: []string{stun},
 		})
 	}
 
-	
 	for _, turn := range turnServers {
 		iceServers = append(iceServers, webrtc.ICEServer{
 			URLs:       []string{turn},
@@ -45,7 +40,6 @@ func NewSFUService(roomManager *RoomManager, stunServers, turnServers []string, 
 	}
 
 	settingEngine := webrtc.SettingEngine{}
-
 
 	if publicIP != "" {
 		settingEngine.SetNAT1To1IPs([]string{publicIP}, webrtc.ICECandidateTypeHost)
@@ -67,13 +61,11 @@ func NewSFUService(roomManager *RoomManager, stunServers, turnServers []string, 
 		api:         api,
 		config: webrtc.Configuration{
 			ICEServers: iceServers,
-			
+
 			SDPSemantics: webrtc.SDPSemanticsUnifiedPlan,
 		},
 	}
 }
-
-
 
 func (s *SFUService) HandleJoin(roomID, userID string, ws *websocket.Conn) error {
 	sfuLogger.Info("🚀 HandleJoin - User %s joining room %s", userID, roomID)
@@ -100,6 +92,7 @@ func (s *SFUService) HandleJoin(roomID, userID string, ws *websocket.Conn) error
 		LastActivity:   time.Now(),
 		LocalTracks:    make([]*webrtc.TrackLocalStaticRTP, 0),
 		RemoteTracks:   make([]*webrtc.TrackRemote, 0),
+		AddedTrackIDs:  make(map[string]*webrtc.RTPSender),
 	}
 
 	sfuLogger.Info("👤 Adding peer %s to room %s", userID, roomID)
@@ -120,13 +113,9 @@ func (s *SFUService) HandleJoin(roomID, userID string, ws *websocket.Conn) error
 	return nil
 }
 
-
-
 func (s *SFUService) setupPeerHandlers(peer *models.VoicePeer, room *models.VoiceRoom) {
 	pc := peer.PeerConnection
 
-	
-	
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		sfuLogger.Info("🎵 OnTrack FIRED - Received %s track from user %s (SSRC: %d, PayloadType: %d)",
 			track.Kind(), peer.UserID, track.SSRC(), track.PayloadType())
@@ -146,8 +135,6 @@ func (s *SFUService) setupPeerHandlers(peer *models.VoicePeer, room *models.Voic
 		s.forwardTrackToOthers(peer, track, room)
 	})
 
-	
-	
 	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		sfuLogger.Info("🧊 ICE Connection State Change - User %s: %s", peer.UserID, state.String())
 
@@ -170,8 +157,6 @@ func (s *SFUService) setupPeerHandlers(peer *models.VoicePeer, room *models.Voic
 		}
 	})
 
-	
-	
 	pc.OnICECandidate(func(candidate *webrtc.ICECandidate) {
 		if candidate == nil {
 			sfuLogger.Info("🏁 ICE gathering complete for user %s (received nil candidate)", peer.UserID)
@@ -196,7 +181,6 @@ func (s *SFUService) setupPeerHandlers(peer *models.VoicePeer, room *models.Voic
 			sfuLogger.Info("✅ Successfully sent ICE candidate to user %s", peer.UserID)
 		}
 	})
-
 
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		sfuLogger.Info("🔌 Peer Connection State Change - User %s: %s", peer.UserID, state.String())
@@ -244,17 +228,21 @@ func (s *SFUService) setupPeerHandlers(peer *models.VoicePeer, room *models.Voic
 	})
 }
 
-
-
 // triggerRenegotiation creates a new offer for a peer and sends it to the client
 func (s *SFUService) triggerRenegotiation(peer *models.VoicePeer, room *models.VoiceRoom) {
+	// Multiple tracks can arrive at nearly the same time. Do not create
+	// overlapping offers for the same PeerConnection.
+	peer.NegotiationMu.Lock()
+	defer peer.NegotiationMu.Unlock()
+
 	// Check if the connection is in a stable state before renegotiating
 	signalingState := peer.PeerConnection.SignalingState()
 	if signalingState != webrtc.SignalingStateStable {
 		sfuLogger.Info("⏸️  Marking peer %s for deferred renegotiation - signaling state is %s (not stable)",
 			peer.UserID, signalingState.String())
 
-		// Mark the peer as needing renegotiation when connection becomes stable
+		// Mark the peer as needing renegotiation. HandleAnswer will retry this
+		// after the outstanding offer/answer exchange reaches stable.
 		peer.Mu.Lock()
 		peer.NeedsRenegotiation = true
 		peer.Mu.Unlock()
@@ -300,7 +288,7 @@ func (s *SFUService) triggerRenegotiation(peer *models.VoicePeer, room *models.V
 	sfuLogger.Info("✅ Successfully sent renegotiation offer to peer %s", peer.UserID)
 }
 
-func (s *SFUService) addExistingTracksToNewPeer(newPeer *models.VoicePeer, room *models.VoiceRoom) {
+func (s *SFUService) addExistingTracksToNewPeer(newPeer *models.VoicePeer, room *models.VoiceRoom) int {
 	allPeers := room.GetAllPeers()
 	sfuLogger.Info("🎯 addExistingTracksToNewPeer: New peer %s joining room with %d total peers",
 		newPeer.UserID, len(allPeers))
@@ -320,31 +308,27 @@ func (s *SFUService) addExistingTracksToNewPeer(newPeer *models.VoicePeer, room 
 		}
 
 		existingPeer.Mu.RLock()
-		trackCount := len(existingPeer.LocalTracks)
+		tracks := append([]*webrtc.TrackLocalStaticRTP(nil), existingPeer.LocalTracks...)
+		existingPeer.Mu.RUnlock()
+		trackCount := len(tracks)
 		sfuLogger.Info("👤 Existing peer %s - LocalTracks: %d, Connection state: %s",
 			existingPeer.UserID, trackCount, connState.String())
 
 		if trackCount == 0 {
 			sfuLogger.Info("⏭️  Peer %s has no local tracks to add", existingPeer.UserID)
-			existingPeer.Mu.RUnlock()
 			continue
 		}
 
-		for i, localTrack := range existingPeer.LocalTracks {
+		for i, localTrack := range tracks {
 			sfuLogger.Info("🔀 Attempting to add track %d from %s to new peer %s (Track ID: %s, StreamID: %s)",
 				i, existingPeer.UserID, newPeer.UserID, localTrack.ID(), localTrack.StreamID())
 
-			_, err := newPeer.PeerConnection.AddTrack(localTrack)
-			if err != nil {
-				sfuLogger.Error("❌ Failed to add existing track %d from %s to new peer %s: %v",
-					i, existingPeer.UserID, newPeer.UserID, err)
-				continue
+			if _, added := s.addTrackToPeer(existingPeer, newPeer, localTrack, room, false); added {
+				tracksAdded++
+				sfuLogger.Info("✅ Successfully added track %d from %s to new peer %s (track ID: %s)",
+					i, existingPeer.UserID, newPeer.UserID, localTrack.ID())
 			}
-			tracksAdded++
-			sfuLogger.Info("✅ Successfully added track %d from %s to new peer %s (track ID: %s)",
-				i, existingPeer.UserID, newPeer.UserID, localTrack.ID())
 		}
-		existingPeer.Mu.RUnlock()
 	}
 
 	if tracksAdded == 0 {
@@ -352,9 +336,57 @@ func (s *SFUService) addExistingTracksToNewPeer(newPeer *models.VoicePeer, room 
 	} else {
 		sfuLogger.Info("✅ Successfully added %d tracks to new peer %s", tracksAdded, newPeer.UserID)
 	}
+	return tracksAdded
 }
 
+// addTrackToPeer adds a source track exactly once to a destination peer. The
+// operation is deliberately repeatable because a track can arrive while a
+// new peer is completing its initial offer/answer exchange.
+func (s *SFUService) addTrackToPeer(sender, target *models.VoicePeer, track *webrtc.TrackLocalStaticRTP, room *models.VoiceRoom, renegotiate bool) (*webrtc.RTPSender, bool) {
+	if sender == target || sender.UserID == target.UserID {
+		return nil, false
+	}
 
+	target.Mu.Lock()
+	if target.AddedTrackIDs == nil {
+		target.AddedTrackIDs = make(map[string]*webrtc.RTPSender)
+	}
+	if existing, exists := target.AddedTrackIDs[track.ID()]; exists {
+		if existing.Track() != track {
+			if err := existing.ReplaceTrack(track); err != nil {
+				sfuLogger.Error("Failed to replace reconnected track from %s to %s: %v", sender.UserID, target.UserID, err)
+			} else {
+				sfuLogger.Info("Replaced reconnected track from %s to %s", sender.UserID, target.UserID)
+			}
+		}
+		target.Mu.Unlock()
+		return nil, false
+	}
+
+	connState := target.PeerConnection.ConnectionState()
+	if connState == webrtc.PeerConnectionStateClosed || connState == webrtc.PeerConnectionStateFailed {
+		target.Mu.Unlock()
+		sfuLogger.Warn("⚠️ Skipping track from %s to %s - connection state is %s",
+			sender.UserID, target.UserID, connState.String())
+		return nil, false
+	}
+
+	rtpSender, err := target.PeerConnection.AddTrack(track)
+	if err != nil {
+		target.Mu.Unlock()
+		sfuLogger.Error("❌ Failed to add track from %s to peer %s (state: %s): %v",
+			sender.UserID, target.UserID, connState.String(), err)
+		return nil, false
+	}
+	target.AddedTrackIDs[track.ID()] = rtpSender
+	target.Mu.Unlock()
+
+	sfuLogger.Info("✅ Added track from %s to peer %s (track ID: %s)", sender.UserID, target.UserID, track.ID())
+	if renegotiate && room != nil {
+		go s.triggerRenegotiation(target, room)
+	}
+	return rtpSender, true
+}
 
 func (s *SFUService) forwardTrackToOthers(sender *models.VoicePeer, incomingTrack *webrtc.TrackRemote, room *models.VoiceRoom) {
 	sfuLogger.Info("🎵 forwardTrackToOthers: Received %s track from %s", incomingTrack.Kind(), sender.UserID)
@@ -374,7 +406,6 @@ func (s *SFUService) forwardTrackToOthers(sender *models.VoicePeer, incomingTrac
 	sfuLogger.Info("📊 Sender %s now has %d local tracks", sender.UserID, len(sender.LocalTracks))
 	sender.Mu.Unlock()
 
-	
 	go func() {
 		rtpBuf := make([]byte, 1500)
 		for {
@@ -386,7 +417,6 @@ func (s *SFUService) forwardTrackToOthers(sender *models.VoicePeer, incomingTrac
 				return
 			}
 
-			
 			if _, err := localTrack.Write(rtpBuf[:n]); err != nil {
 				if err != io.ErrClosedPipe {
 					sfuLogger.Error("Error writing to track: %v", err)
@@ -411,33 +441,24 @@ func (s *SFUService) forwardTrackToOthers(sender *models.VoicePeer, incomingTrac
 			continue
 		}
 
-		rtpSender, err := otherPeer.PeerConnection.AddTrack(localTrack)
-		if err != nil {
-			sfuLogger.Error("❌ Failed to add track to peer %s (state: %s): %v", otherPeer.UserID, connState.String(), err)
+		rtpSender, added := s.addTrackToPeer(sender, otherPeer, localTrack, room, true)
+		if !added {
 			continue
 		}
-		sfuLogger.Info("✅ Added track from %s to peer %s", sender.UserID, otherPeer.UserID)
 
-		// Trigger renegotiation for the peer to receive the new track
-		go s.triggerRenegotiation(otherPeer, room)
-
-		
-		go func(peer *models.VoicePeer) {
+		go func(peer *models.VoicePeer, sender *webrtc.RTPSender) {
 			rtcpBuf := make([]byte, 1500)
 			for {
-				if _, _, err := rtpSender.Read(rtcpBuf); err != nil {
+				if _, _, err := sender.Read(rtcpBuf); err != nil {
 					return
 				}
-				
-				
+
 			}
-		}(otherPeer)
+		}(otherPeer, rtpSender)
 
 		sfuLogger.Info("Forwarding track from %s to %s", sender.UserID, otherPeer.UserID)
 	}
 }
-
-
 
 func (s *SFUService) HandleAnswer(roomID, userID string, answer webrtc.SessionDescription) error {
 	sfuLogger.Info("🔵 HandleAnswer called for user %s in room %s with SDP type %s", userID, roomID, answer.Type)
@@ -462,6 +483,18 @@ func (s *SFUService) HandleAnswer(roomID, userID string, answer webrtc.SessionDe
 	}
 
 	sfuLogger.Info("✅ Set remote description (answer) for user %s", userID)
+
+	// A track may have been added while this peer was still negotiating its
+	// previous offer. Retry the deferred renegotiation now that the answer has
+	// returned the connection to stable.
+	peer.Mu.RLock()
+	needsRenegotiation := peer.NeedsRenegotiation
+	peer.Mu.RUnlock()
+	if needsRenegotiation {
+		sfuLogger.Info("🔁 Retrying deferred renegotiation for user %s after answer", userID)
+		go s.triggerRenegotiation(peer, room)
+	}
+
 	return nil
 }
 
@@ -502,6 +535,14 @@ func (s *SFUService) HandleOffer(roomID, userID string, offer webrtc.SessionDesc
 		return nil, err
 	}
 
+	// Repeat synchronization after the initial answer. The first pass can race
+	// with an existing peer's OnTrack callback; tracks found in this pass need a
+	// follow-up renegotiation because they were not in the initial answer SDP.
+	if tracksAdded := s.addExistingTracksToNewPeer(peer, room); tracksAdded > 0 {
+		sfuLogger.Info("🔁 Tracks discovered after the initial answer for %s; triggering renegotiation", userID)
+		go s.triggerRenegotiation(peer, room)
+	}
+
 	peer.Mu.RLock()
 	localTrackCount := len(peer.LocalTracks)
 	peer.Mu.RUnlock()
@@ -510,8 +551,6 @@ func (s *SFUService) HandleOffer(roomID, userID string, offer webrtc.SessionDesc
 		userID, localTrackCount, answer.Type)
 	return &answer, nil
 }
-
-
 
 func (s *SFUService) HandleICECandidate(roomID, userID string, candidate webrtc.ICECandidateInit) error {
 	room, err := s.roomManager.GetRoom(roomID)
@@ -533,8 +572,6 @@ func (s *SFUService) HandleICECandidate(roomID, userID string, candidate webrtc.
 	return nil
 }
 
-
-
 func (s *SFUService) HandleLeave(roomID, userID string) error {
 	room, err := s.roomManager.GetRoom(roomID)
 	if err != nil {
@@ -544,11 +581,8 @@ func (s *SFUService) HandleLeave(roomID, userID string) error {
 	room.RemovePeer(userID)
 	sfuLogger.Info("User %s left room %s (remaining: %d)", userID, roomID, room.GetPeerCount())
 
-	
 	s.broadcastRoomState(room, userID, "user_left")
 
-	
-	
 	if room.GetPeerCount() == 0 {
 		s.roomManager.DeleteRoom(roomID)
 		sfuLogger.Info("Deleted empty room: %s", roomID)
@@ -556,7 +590,6 @@ func (s *SFUService) HandleLeave(roomID, userID string) error {
 
 	return nil
 }
-
 
 func (s *SFUService) HandleMute(roomID, userID string, isMuted bool) error {
 	room, err := s.roomManager.GetRoom(roomID)
@@ -573,14 +606,11 @@ func (s *SFUService) HandleMute(roomID, userID string, isMuted bool) error {
 	peer.IsMuted = isMuted
 	peer.Mu.Unlock()
 
-	
 	s.broadcastRoomState(room, userID, "user_muted")
 
 	sfuLogger.Info("User %s %s in room %s", userID, map[bool]string{true: "muted", false: "unmuted"}[isMuted], roomID)
 	return nil
 }
-
-
 
 func (s *SFUService) broadcastRoomState(room *models.VoiceRoom, triggerUserID, eventType string) {
 	response := models.VoiceResponse{
@@ -599,8 +629,6 @@ func (s *SFUService) broadcastRoomState(room *models.VoiceRoom, triggerUserID, e
 	}
 }
 
-
-
 func (s *SFUService) GetRoomStats(roomID string) (map[string]interface{}, error) {
 	room, err := s.roomManager.GetRoom(roomID)
 	if err != nil {
@@ -608,14 +636,13 @@ func (s *SFUService) GetRoomStats(roomID string) (map[string]interface{}, error)
 	}
 
 	return map[string]interface{}{
-		"roomId":       room.ID,
-		"peerCount":    room.GetPeerCount(),
-		"users":        room.GetVoiceUsers(),
-		"createdAt":    room.CreatedAt,
+		"roomId":          room.ID,
+		"peerCount":       room.GetPeerCount(),
+		"users":           room.GetVoiceUsers(),
+		"createdAt":       room.CreatedAt,
 		"maxParticipants": room.MaxParticipants,
 	}, nil
 }
-
 
 func (s *SFUService) GetRoomManager() *RoomManager {
 	return s.roomManager

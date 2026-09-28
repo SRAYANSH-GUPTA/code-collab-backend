@@ -1,0 +1,46 @@
+name: codecollab-ministack
+services:
+  ministack:
+    image: ministackorg/ministack:1.5.10
+    container_name: codecollab-ministack
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MINISTACK_PORT:-4566}:4566"
+    environment:
+      MINISTACK_REGION: ap-south-1
+      MINISTACK_ACCOUNT_ID: "000000000000"
+      AWS_DEFAULT_REGION: ap-south-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      LAMBDA_EXECUTOR: docker
+      LAMBDA_STRICT: "1"
+      LAMBDA_WARM_TTL_SECONDS: "30"
+      LAMBDA_DOCKER_FLAGS: "-m 512m -e GOMAXPROCS=2"
+      DOCKER_NETWORK: codecollab-ministack
+      PERSIST_STATE: "1"
+      STATE_DIR: /data
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - state:/data
+      - ./ready.py:/docker-entrypoint-initaws.d/ready.d/10-linters.py:ro
+      - ./smoke.py:/opt/codecollab/smoke.py:ro
+    networks:
+      - lambda
+    mem_limit: 512m
+    cpus: 1.0
+    stop_grace_period: 45s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,pathlib; urllib.request.urlopen('http://localhost:4566/_ministack/health',timeout=3); assert pathlib.Path('/tmp/codecollab-linters-ready').exists()"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+networks:
+  lambda:
+    name: codecollab-ministack
+volumes:
+  state:

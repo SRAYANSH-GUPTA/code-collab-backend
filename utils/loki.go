@@ -10,19 +10,19 @@ import (
 )
 
 type RequestLog struct {
-	Timestamp      time.Time
-	Method         string
-	Path           string
-	Query          string
-	Headers        map[string]string
-	RequestBody    string
-	ResponseBody   string
-	StatusCode     int
-	DurationMs     int64
-	RemoteAddr     string
-	UserAgent      string
-	ContentLength  int64
-	ResponseSize   int64
+	Timestamp     time.Time
+	Method        string
+	Path          string
+	Query         string
+	Headers       map[string]string
+	RequestBody   string
+	ResponseBody  string
+	StatusCode    int
+	DurationMs    int64
+	RemoteAddr    string
+	UserAgent     string
+	ContentLength int64
+	ResponseSize  int64
 }
 
 type LokiLogger struct {
@@ -57,20 +57,23 @@ func NewLokiLogger(lokiURL string, labels map[string]string) *LokiLogger {
 }
 
 func (l *LokiLogger) LogRequest(log RequestLog) {
+	if l.lokiURL == "" || l.lokiURL == "disabled" {
+		return
+	}
 	logData := map[string]interface{}{
-		"timestamp":       log.Timestamp.Format(time.RFC3339Nano),
-		"method":          log.Method,
-		"path":            log.Path,
-		"query":           log.Query,
-		"headers":         log.Headers,
-		"request_body":    log.RequestBody,
-		"response_body":   log.ResponseBody,
-		"status_code":     log.StatusCode,
-		"duration_ms":     log.DurationMs,
-		"remote_addr":     log.RemoteAddr,
-		"user_agent":      log.UserAgent,
-		"content_length":  log.ContentLength,
-		"response_size":   log.ResponseSize,
+		"timestamp":      log.Timestamp.Format(time.RFC3339Nano),
+		"method":         log.Method,
+		"path":           log.Path,
+		"query":          log.Query,
+		"headers":        log.Headers,
+		"request_body":   log.RequestBody,
+		"response_body":  log.ResponseBody,
+		"status_code":    log.StatusCode,
+		"duration_ms":    log.DurationMs,
+		"remote_addr":    log.RemoteAddr,
+		"user_agent":     log.UserAgent,
+		"content_length": log.ContentLength,
+		"response_size":  log.ResponseSize,
 	}
 
 	logJSON, err := json.Marshal(logData)
